@@ -57,7 +57,7 @@ type InFlightHTLC struct {
 
 	// ProposedHTLC contains the original details of the HTLC that was
 	// forwarded to us.
-        // TODO: We probably don't need to store all of this info.
+	// TODO: We probably don't need to store all of this info.
 	*ProposedHTLC
 }
 
