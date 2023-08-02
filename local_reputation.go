@@ -1,6 +1,7 @@
 package localreputation
 
 import (
+	"math"
 	"time"
 
 	"github.com/lightningnetwork/lnd/clock"
@@ -128,6 +129,62 @@ func (r *ReputationManager) SufficientReputation(htlc *ProposedHTLC) bool {
 // has been forwarded (and is now in-flight on the outgoing channel).
 func (r *ReputationManager) ForwardHTLC(htlc *ProposedHTLC) {
 	r.getChannelReputation(htlc.IncomingChannel).addInFlight(htlc)
+}
+
+// ResolveHTLC updates the reputation manager's state to reflect the
+// resolution
+func (r *ReputationManager) ResolveHTLC(htlc *ResolvedHLTC) {
+	// Fetch the in flight HTLC from the incoming channel and add its
+	// effective fees to the incoming channel's reputation.
+	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
+	inFlight, ok := incomingChannel.inFlightHTLCs[htlc.IncomingIndex]
+	if !ok {
+		return
+	}
+
+	delete(incomingChannel.inFlightHTLCs, inFlight.IncomingIndex)
+	effectiveFees := r.effectiveFees(inFlight, htlc.Success)
+	incomingChannel.revenue.add(effectiveFees)
+
+	// Add the fees for the forward to the outgoing channel _if_ the
+	// HTLC was successful.
+	outgoingChannel := r.getChannelRevenue(htlc.OutgoingChannel)
+	if htlc.Success {
+		outgoingChannel.add(float64(inFlight.ForwardingFee))
+	}
+}
+
+func (r *ReputationManager) effectiveFees(htlc *InFlightHTLC,
+	success bool) float64 {
+
+	resolutionTime := r.clock.Now().Sub(htlc.TimestampAdded).Seconds()
+	resolutionSeconds := r.resolutionPeriod.Seconds()
+
+	opportunityCost := math.Ceil(
+		(resolutionTime-resolutionSeconds)/resolutionSeconds,
+	) * float64(htlc.ForwardingFee)
+
+	switch {
+	// Successful, endorsed HTLC.
+	case htlc.IncomingEndorsed && success:
+		return float64(htlc.ForwardingFee) - opportunityCost
+
+		// Failed, endorsed HTLC.
+	case htlc.IncomingEndorsed:
+		return -1 * opportunityCost
+
+	// Successful, unendorsed HTLC.
+	case success:
+		if resolutionTime <= r.resolutionPeriod.Seconds() {
+			return float64(htlc.ForwardingFee)
+		}
+
+		return 0
+
+	// Failed, unendorsed HTLC.
+	default:
+		return 0
+	}
 }
 
 type reputationTracker struct {
