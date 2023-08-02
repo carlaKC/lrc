@@ -124,6 +124,12 @@ func (r *ReputationManager) SufficientReputation(htlc *ProposedHTLC) bool {
 	return incomingRevenue > outgoingRevenue+inFlightRisk
 }
 
+// ForwardHTLC updates the reputation manager's state to reflect that a HTLC
+// has been forwarded (and is now in-flight on the outgoing channel).
+func (r *ReputationManager) ForwardHTLC(htlc *ProposedHTLC) {
+	r.getChannelReputation(htlc.IncomingChannel).addInFlight(htlc)
+}
+
 type reputationTracker struct {
 	// revenue tracks the bi-directional revenue that this channel has
 	// earned the local node as the incoming edge for HTLC forwards.
@@ -131,6 +137,22 @@ type reputationTracker struct {
 
 	// inFlightHTLCs provides a map of in-flight HTLCs, keyed by htlc id.
 	inFlightHTLCs map[int]*InFlightHTLC
+}
+
+// addInFlight updates the outgoing channel's view to include a new in flight
+// HTLC.
+func (r *reputationTracker) addInFlight(htlc *ProposedHTLC) {
+	inFlightHTLC := &InFlightHTLC{
+		TimestampAdded: r.revenue.clock.Now(),
+		ProposedHTLC:   htlc,
+	}
+
+	// Sanity check whether the HTLC is already present.
+	if _, ok := r.inFlightHTLCs[htlc.IncomingIndex]; ok {
+		return
+	}
+
+	r.inFlightHTLCs[htlc.IncomingIndex] = inFlightHTLC
 }
 
 // inFlightHTLCRisk returns the total outstanding risk of the incoming
