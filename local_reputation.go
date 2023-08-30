@@ -35,6 +35,10 @@ type ReputationManager struct {
 	// earned the local node for both incoming and outgoing HTLCs.
 	channelRevenue map[lnwire.ShortChannelID]*decayingAverage
 
+	// resolutionPeriod is the period of time that is considered reasonable
+	// for a htlc to resolve in.
+	resolutionPeriod time.Duration
+
 	clock clock.Clock
 }
 
@@ -42,7 +46,8 @@ type ReputationManager struct {
 // channel revenue over the window provided, and incoming channel reputation
 // over the window scaled by the multiplier.
 func NewReputationManager(revenueWindow time.Duration,
-	reputationMultiplier int, clock clock.Clock) *ReputationManager {
+	reputationMultiplier int, resolutionPeriod time.Duration,
+	clock clock.Clock) *ReputationManager {
 
 	return &ReputationManager{
 		revenueWindow: revenueWindow,
@@ -55,7 +60,8 @@ func NewReputationManager(revenueWindow time.Duration,
 		channelRevenue: make(
 			map[lnwire.ShortChannelID]*decayingAverage,
 		),
-		clock: clock,
+		resolutionPeriod: resolutionPeriod,
+		clock:            clock,
 	}
 }
 
@@ -94,6 +100,30 @@ func (r *ReputationManager) getChannelReputation(
 	return r.channelReputation[channel]
 }
 
+// SufficientReputation returns a boolean indicating whether the forwarding
+// peer has sufficient reputation to forward the proposed htlc over the
+// outgoing channel that they have requested.
+func (r *ReputationManager) SufficientReputation(htlc *ProposedHTLC) bool {
+	outgoingChannel := r.getChannelRevenue(htlc.OutgoingChannel)
+	outgoingRevenue := outgoingChannel.getValue()
+
+	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
+	incomingRevenue := incomingChannel.revenue.getValue()
+
+	// Get the in flight risk for the incoming channel.
+	inFlightRisk := incomingChannel.inFlightHTLCRisk(
+		htlc.IncomingChannel, r.resolutionPeriod,
+	)
+
+	// We include the proposed HTLC in our in-flight risk as well, as this
+	// is the risk we're taking on.
+	inFlightRisk += outstandingRisk(htlc, r.resolutionPeriod)
+
+	// The incoming channel has sufficient reputation if:
+	// incoming_channel_revenue - in_flight_risk >= outgoing_link_revenue
+	return incomingRevenue > outgoingRevenue+inFlightRisk
+}
+
 type reputationTracker struct {
 	// revenue tracks the bi-directional revenue that this channel has
 	// earned the local node as the incoming edge for HTLC forwards.
@@ -101,4 +131,29 @@ type reputationTracker struct {
 
 	// inFlightHTLCs provides a map of in-flight HTLCs, keyed by htlc id.
 	inFlightHTLCs map[int]*InFlightHTLC
+}
+
+// inFlightHTLCRisk returns the total outstanding risk of the incoming
+// in-flight HTLCs from a specific channel.
+func (r *reputationTracker) inFlightHTLCRisk(
+	incomingChannel lnwire.ShortChannelID,
+	resolutionPeriod time.Duration) float64 {
+
+	var inFlightRisk float64
+	for _, htlc := range r.inFlightHTLCs {
+		inFlightRisk += outstandingRisk(
+			htlc.ProposedHTLC, resolutionPeriod,
+		)
+	}
+
+	return inFlightRisk
+}
+
+// outstandingRisk calculates the outstanding risk of in-flight HLTCs.
+func outstandingRisk(htlc *ProposedHTLC,
+	resolutionPeriod time.Duration) float64 {
+
+	return (float64(htlc.ForwardingFee) *
+		float64(htlc.CltvExpiryDelta) * 10 * 60) /
+		resolutionPeriod.Seconds()
 }
