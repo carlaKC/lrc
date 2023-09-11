@@ -23,6 +23,22 @@ type LocalReputationManager interface {
 	ResolveHTLC(htlc *ResolvedHLTC)
 }
 
+// resourceBucketer implements basic resource bucketing for local resource
+// conservation.
+type resourceBucketer interface {
+	// addHTLC poses a HTLC to the resource manager for addition to its
+	// appropriate bucket. If there is space for the HTLC, this call will
+	// update internal state and return true. If the bucket is full, the
+	// resource manager will return false and its state will remain
+	// unchanged.
+	addHTLC(protected bool, amount lnwire.MilliSatoshi) bool
+
+	// removeHTLC updates the resource manager to remove an in-flight HTLC
+	// from its appropriate bucket. Note that this must *only* be called
+	// for HTLCs that were added with a true response from addHTLC.
+	removeHTLC(protected bool, amount lnwire.MilliSatoshi)
+}
+
 // ProposedHTLC provides information about a HTLC has has been locked in on
 // our incoming channel, but not yet forwarded.
 type ProposedHTLC struct {
