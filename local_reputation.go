@@ -154,7 +154,7 @@ func (r *ReputationManager) ResolveHTLC(htlc *ResolvedHLTC) {
 	// HTLC was successful.
 	outgoingChannel := r.getChannelRevenue(htlc.OutgoingChannel)
 	if htlc.Success {
-		outgoingChannel.add(float64(inFlight.ForwardingFee))
+		outgoingChannel.add(float64(inFlight.ForwardingFee()))
 	}
 }
 
@@ -163,15 +163,16 @@ func (r *ReputationManager) effectiveFees(htlc *InFlightHTLC,
 
 	resolutionTime := r.clock.Now().Sub(htlc.TimestampAdded).Seconds()
 	resolutionSeconds := r.resolutionPeriod.Seconds()
+	fee := float64(htlc.ForwardingFee())
 
 	opportunityCost := math.Ceil(
 		(resolutionTime-resolutionSeconds)/resolutionSeconds,
-	) * float64(htlc.ForwardingFee)
+	) * fee
 
 	switch {
 	// Successful, endorsed HTLC.
 	case htlc.IncomingEndorsed && success:
-		return float64(htlc.ForwardingFee) - opportunityCost
+		return fee - opportunityCost
 
 		// Failed, endorsed HTLC.
 	case htlc.IncomingEndorsed:
@@ -180,7 +181,7 @@ func (r *ReputationManager) effectiveFees(htlc *InFlightHTLC,
 	// Successful, unendorsed HTLC.
 	case success:
 		if resolutionTime <= r.resolutionPeriod.Seconds() {
-			return float64(htlc.ForwardingFee)
+			return fee
 		}
 
 		return 0
@@ -236,7 +237,7 @@ func (r *reputationTracker) inFlightHTLCRisk(
 func outstandingRisk(htlc *ProposedHTLC,
 	resolutionPeriod time.Duration) float64 {
 
-	return (float64(htlc.ForwardingFee) *
+	return (float64(htlc.ForwardingFee()) *
 		float64(htlc.CltvExpiryDelta) * 10 * 60) /
 		resolutionPeriod.Seconds()
 }

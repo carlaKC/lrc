@@ -57,12 +57,20 @@ type ProposedHTLC struct {
 	// this HTLC as endorsed.
 	IncomingEndorsed bool
 
-	// ForwardingFee is the value that is offered by the HTLC.
-	ForwardingFee lnwire.MilliSatoshi
+	// IncomingAmount is the amount of the HTLC on the incoming channel.
+	IncomingAmount lnwire.MilliSatoshi
+
+	// OutgoingAmount is the amount of the HTLC on the outgoing channel.
+	OutgoingAmount lnwire.MilliSatoshi
 
 	// CltvExpiryDelta is the difference between the block height at which
 	// the HTLC was forwarded and its outgoing_cltv_expiry.
 	CltvExpiryDelta uint32
+}
+
+// ForwardingFee returns the fee paid by a htlc.
+func (p *ProposedHTLC) ForwardingFee() lnwire.MilliSatoshi {
+	return p.IncomingAmount - p.OutgoingAmount
 }
 
 // InFlightHTLC tracks a HTLC forward that is currently in flight.
