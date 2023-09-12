@@ -36,9 +36,9 @@ type ReputationManager struct {
 	//   node that have not yet resolved.
 	channelReputation map[lnwire.ShortChannelID]*reputationTracker
 
-	// channelRevenue tracks the routing revenue that channels have
+	// targetChannels tracks the routing revenue that channels have
 	// earned the local node for both incoming and outgoing HTLCs.
-	channelRevenue map[lnwire.ShortChannelID]*decayingAverage
+	targetChannels map[lnwire.ShortChannelID]*decayingAverage
 
 	// resolutionPeriod is the period of time that is considered reasonable
 	// for a htlc to resolve in.
@@ -62,7 +62,7 @@ func NewReputationManager(revenueWindow time.Duration,
 		channelReputation: make(
 			map[lnwire.ShortChannelID]*reputationTracker,
 		),
-		channelRevenue: make(
+		targetChannels: make(
 			map[lnwire.ShortChannelID]*decayingAverage,
 		),
 		resolutionPeriod: resolutionPeriod,
@@ -77,13 +77,13 @@ func NewReputationManager(revenueWindow time.Duration,
 func (r *ReputationManager) getChannelRevenue(
 	channel lnwire.ShortChannelID) *decayingAverage {
 
-	if r.channelRevenue[channel] == nil {
-		r.channelRevenue[channel] = newDecayingAverage(
+	if r.targetChannels[channel] == nil {
+		r.targetChannels[channel] = newDecayingAverage(
 			r.clock, r.revenueWindow,
 		)
 	}
 
-	return r.channelRevenue[channel]
+	return r.targetChannels[channel]
 }
 
 // getChannelReputation looks up a channel's reputation tracker in the
