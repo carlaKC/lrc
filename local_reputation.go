@@ -70,11 +70,11 @@ func NewReputationManager(revenueWindow time.Duration,
 	}
 }
 
-// getChannelRevenue looks up a channel's revenue record in the reputation
+// getTargetChannel looks up a channel's revenue record in the reputation
 // manager, creating a new decaying average if one if not found. This function
 // returns a pointer to the map entry which can be used to mutate its
 // underlying value.
-func (r *ReputationManager) getChannelRevenue(
+func (r *ReputationManager) getTargetChannel(
 	channel lnwire.ShortChannelID) *decayingAverage {
 
 	if r.targetChannels[channel] == nil {
@@ -109,7 +109,7 @@ func (r *ReputationManager) getChannelReputation(
 // peer has sufficient reputation to forward the proposed htlc over the
 // outgoing channel that they have requested.
 func (r *ReputationManager) SufficientReputation(htlc *ProposedHTLC) bool {
-	outgoingChannel := r.getChannelRevenue(htlc.OutgoingChannel)
+	outgoingChannel := r.getTargetChannel(htlc.OutgoingChannel)
 	outgoingRevenue := outgoingChannel.getValue()
 
 	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
@@ -152,7 +152,7 @@ func (r *ReputationManager) ResolveHTLC(htlc *ResolvedHLTC) {
 
 	// Add the fees for the forward to the outgoing channel _if_ the
 	// HTLC was successful.
-	outgoingChannel := r.getChannelRevenue(htlc.OutgoingChannel)
+	outgoingChannel := r.getTargetChannel(htlc.OutgoingChannel)
 	if htlc.Success {
 		outgoingChannel.add(float64(inFlight.ForwardingFee()))
 	}
