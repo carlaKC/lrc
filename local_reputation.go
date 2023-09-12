@@ -38,7 +38,7 @@ type ReputationManager struct {
 
 	// targetChannels tracks the routing revenue that channels have
 	// earned the local node for both incoming and outgoing HTLCs.
-	targetChannels map[lnwire.ShortChannelID]*decayingAverage
+	targetChannels map[lnwire.ShortChannelID]*targetChannelTracker
 
 	// resolutionPeriod is the period of time that is considered reasonable
 	// for a htlc to resolve in.
@@ -63,7 +63,7 @@ func NewReputationManager(revenueWindow time.Duration,
 			map[lnwire.ShortChannelID]*reputationTracker,
 		),
 		targetChannels: make(
-			map[lnwire.ShortChannelID]*decayingAverage,
+			map[lnwire.ShortChannelID]*targetChannelTracker,
 		),
 		resolutionPeriod: resolutionPeriod,
 		clock:            clock,
@@ -75,10 +75,10 @@ func NewReputationManager(revenueWindow time.Duration,
 // returns a pointer to the map entry which can be used to mutate its
 // underlying value.
 func (r *ReputationManager) getTargetChannel(
-	channel lnwire.ShortChannelID) *decayingAverage {
+	channel lnwire.ShortChannelID) *targetChannelTracker {
 
 	if r.targetChannels[channel] == nil {
-		r.targetChannels[channel] = newDecayingAverage(
+		r.targetChannels[channel] = newTargetChannelTracker(
 			r.clock, r.revenueWindow,
 		)
 	}
@@ -110,7 +110,7 @@ func (r *ReputationManager) getChannelReputation(
 // outgoing channel that they have requested.
 func (r *ReputationManager) SufficientReputation(htlc *ProposedHTLC) bool {
 	outgoingChannel := r.getTargetChannel(htlc.OutgoingChannel)
-	outgoingRevenue := outgoingChannel.getValue()
+	outgoingRevenue := outgoingChannel.revenue.getValue()
 
 	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
 	incomingRevenue := incomingChannel.revenue.getValue()
@@ -154,7 +154,7 @@ func (r *ReputationManager) ResolveHTLC(htlc *ResolvedHLTC) {
 	// HTLC was successful.
 	outgoingChannel := r.getTargetChannel(htlc.OutgoingChannel)
 	if htlc.Success {
-		outgoingChannel.add(float64(inFlight.ForwardingFee()))
+		outgoingChannel.revenue.add(float64(inFlight.ForwardingFee()))
 	}
 }
 
@@ -189,6 +189,20 @@ func (r *ReputationManager) effectiveFees(htlc *InFlightHTLC,
 	// Failed, unendorsed HTLC.
 	default:
 		return 0
+	}
+}
+
+// targetChannelTracker is used to track the revenue and resources of channels
+// that are requested as the outgoing link of a forward.
+type targetChannelTracker struct {
+	revenue *decayingAverage
+}
+
+func newTargetChannelTracker(clock clock.Clock,
+	revenueWindow time.Duration) *targetChannelTracker {
+
+	return &targetChannelTracker{
+		revenue: newDecayingAverage(clock, revenueWindow),
 	}
 }
 
