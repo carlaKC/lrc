@@ -9,19 +9,36 @@ import (
 // LocalReputationManager is an interface representing an entity that tracks
 // the reputation of channel peers based on HTLC forwarding behavior.
 type LocalReputationManager interface {
-	// SufficientReputation returns a boolean indicating whether a proposed
-	// HTLC forward has sufficient reputation for the outgoing channel
-	// requested.
-	SufficientReputation(htlc *ProposedHTLC) bool
-
 	// ForwardHTLC updates the reputation manager to reflect that a
 	// proposed HTLC has been forwarded.
-	ForwardHTLC(htlc *ProposedHTLC)
+	ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome, error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
 	// in-flight HLTC has been resolved.
 	ResolveHTLC(htlc *ResolvedHLTC)
 }
+
+// ForwardOutcome represents the various forwarding outcomes for a proposed
+// HTLC forward.
+type ForwardOutcome int
+
+const (
+	// ForwardOutcomeError covers the zero values for error return so
+	// that we don't return a meaningful enum by mistake.
+	ForwardOutcomeError ForwardOutcome = iota
+
+	// ForwardOutcomeNoResources means that a HTLC should be dropped
+	// because the resource bucket that it qualifies for is full.
+	ForwardOutcomeNoResources
+
+	// ForwardOutcomeUnendorsed means that the HTLC should be forwarded but
+	// not endorsed.
+	ForwardOutcomeUnendorsed
+
+	// ForwardOutcomeEndorsed means that the HTLC should be forwarded
+	// with a positive endorsement signal.
+	ForwardOutcomeEndorsed
+)
 
 // resourceBucketer implements basic resource bucketing for local resource
 // conservation.

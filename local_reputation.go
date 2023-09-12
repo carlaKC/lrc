@@ -132,16 +132,11 @@ func (r *ReputationManager) getChannelReputation(
 	return r.channelReputation[channel]
 }
 
-// SufficientReputation returns a boolean indicating whether the forwarding
+// sufficientReputation returns a boolean indicating whether the forwarding
 // peer has sufficient reputation to forward the proposed htlc over the
 // outgoing channel that they have requested.
-func (r *ReputationManager) SufficientReputation(htlc *ProposedHTLC) bool {
-	outgoingChannel, err := r.getTargetChannel(htlc.OutgoingChannel)
-	if err != nil {
-		return false
-	}
-
-	outgoingRevenue := outgoingChannel.revenue.getValue()
+func (r *ReputationManager) sufficientReputation(htlc *ProposedHTLC,
+	outgoingChannelRevenue float64) bool {
 
 	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
 	incomingRevenue := incomingChannel.revenue.getValue()
@@ -157,13 +152,52 @@ func (r *ReputationManager) SufficientReputation(htlc *ProposedHTLC) bool {
 
 	// The incoming channel has sufficient reputation if:
 	// incoming_channel_revenue - in_flight_risk >= outgoing_link_revenue
-	return incomingRevenue > outgoingRevenue+inFlightRisk
+	return incomingRevenue > outgoingChannelRevenue+inFlightRisk
 }
 
-// ForwardHTLC updates the reputation manager's state to reflect that a HTLC
-// has been forwarded (and is now in-flight on the outgoing channel).
-func (r *ReputationManager) ForwardHTLC(htlc *ProposedHTLC) {
-	r.getChannelReputation(htlc.IncomingChannel).addInFlight(htlc, false)
+// ForwardHTLC returns a boolean indicating whether the HTLC proposed is
+// allowed to proceed based on its reputation, endorsement and resources
+// available on the outgoing channel. If this function returns true, the HTLC
+// has been added to internal state and must be cleared out using ResolveHTLC.
+// If it returns false, it assumes that the HTLC will be failed back and does
+// not expect any further resolution notification.
+func (r *ReputationManager) ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome,
+	error) {
+
+	outgoingChannel, err := r.getTargetChannel(htlc.OutgoingChannel)
+	if err != nil {
+		return ForwardOutcomeError, err
+	}
+
+	// First, check whether the HTLC qualifies for protected resources.
+	reputation := r.sufficientReputation(
+		htlc, outgoingChannel.revenue.getValue(),
+	)
+	htlcProtected := reputation && htlc.IncomingEndorsed
+
+	// Next, check whether there is space for the HTLC in the assigned
+	// bucket on the outgoing channel. If there is no space, we return
+	// false indicating that there are no available resources for the HTLC.
+	canForward := outgoingChannel.resourceBuckets.addHTLC(
+		htlcProtected, htlc.OutgoingAmount,
+	)
+	if !canForward {
+		return ForwardOutcomeNoResources, nil
+	}
+
+	// If there is space for the HTLC, we've accounted for it in our
+	// resource bucketing so we go ahead and add it to the in-flight
+	// HTLCs on the incoming channel, returning true indicating that
+	// we're happy for the HTLC to proceed.
+	r.getChannelReputation(htlc.IncomingChannel).addInFlight(
+		htlc, htlcProtected,
+	)
+
+	if htlcProtected {
+		return ForwardOutcomeEndorsed, nil
+	}
+
+	return ForwardOutcomeUnendorsed, nil
 }
 
 // ResolveHTLC updates the reputation manager's state to reflect the
@@ -195,6 +229,11 @@ func (r *ReputationManager) ResolveHTLC(htlc *ResolvedHLTC) {
 	if htlc.Success {
 		outgoingChannel.revenue.add(float64(inFlight.ForwardingFee()))
 	}
+
+	// Clear out the resources in our resource bucket regardless of outcome.
+	outgoingChannel.resourceBuckets.removeHTLC(
+		inFlight.OutgoingEndorsed, inFlight.OutgoingAmount,
+	)
 }
 
 func (r *ReputationManager) effectiveFees(htlc *InFlightHTLC,
