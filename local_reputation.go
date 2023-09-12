@@ -163,7 +163,7 @@ func (r *ReputationManager) SufficientReputation(htlc *ProposedHTLC) bool {
 // ForwardHTLC updates the reputation manager's state to reflect that a HTLC
 // has been forwarded (and is now in-flight on the outgoing channel).
 func (r *ReputationManager) ForwardHTLC(htlc *ProposedHTLC) {
-	r.getChannelReputation(htlc.IncomingChannel).addInFlight(htlc)
+	r.getChannelReputation(htlc.IncomingChannel).addInFlight(htlc, false)
 }
 
 // ResolveHTLC updates the reputation manager's state to reflect the
@@ -262,10 +262,13 @@ type reputationTracker struct {
 
 // addInFlight updates the outgoing channel's view to include a new in flight
 // HTLC.
-func (r *reputationTracker) addInFlight(htlc *ProposedHTLC) {
+func (r *reputationTracker) addInFlight(htlc *ProposedHTLC,
+	outgoingEndorsed bool) {
+
 	inFlightHTLC := &InFlightHTLC{
-		TimestampAdded: r.revenue.clock.Now(),
-		ProposedHTLC:   htlc,
+		TimestampAdded:   r.revenue.clock.Now(),
+		ProposedHTLC:     htlc,
+		OutgoingEndorsed: outgoingEndorsed,
 	}
 
 	// Sanity check whether the HTLC is already present.

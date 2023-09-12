@@ -79,6 +79,11 @@ type InFlightHTLC struct {
 	// the incoming channel.
 	TimestampAdded time.Time
 
+	// OutgoingEndorsed indicates whether the outgoing HLTC was endorsed
+	// (and thus, that it occupied protected resources on the outgoing
+	// channel).
+	OutgoingEndorsed bool
+
 	// ProposedHTLC contains the original details of the HTLC that was
 	// forwarded to us.
 	// TODO: We probably don't need to store all of this info.
