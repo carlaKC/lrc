@@ -101,3 +101,13 @@ type ResolvedHLTC struct {
 	// Success is true if the HTLC was fulfilled.
 	Success bool
 }
+
+// ChannelInfo provides information about a channel's routing restrictions.
+type ChannelInfo struct {
+	// InFlightHTLC is the total number of htlcs allowed in flight.
+	InFlightHTLC uint64
+
+	// InFlightLiquidity is the total amount of liquidity allowed in
+	// flight.
+	InFlightLiquidity lnwire.MilliSatoshi
+}
