@@ -10,9 +10,9 @@ import (
 // the reputation of channel peers based on HTLC forwarding behavior.
 type LocalResourceManager interface {
 	// ForwardHTLC updates the reputation manager to reflect that a
-	// proposed HTLC has been forwarded. It requires the forwarding 
-        // restrictions of the outgoing channel to implement bucketing 
-        // appropriately.
+	// proposed HTLC has been forwarded. It requires the forwarding
+	// restrictions of the outgoing channel to implement bucketing
+	// appropriately.
 	ForwardHTLC(htlc *ProposedHTLC, info *ChannelInfo) (ForwardOutcome,
 		error)
 
@@ -42,6 +42,26 @@ const (
 	// with a positive endorsement signal.
 	ForwardOutcomeEndorsed
 )
+
+func (f ForwardOutcome) String() string {
+	switch f {
+	case ForwardOutcomeError:
+		return "error"
+
+	case ForwardOutcomeEndorsed:
+		return "endorsed"
+
+	case ForwardOutcomeUnendorsed:
+
+		return "unendorsed"
+
+	case ForwardOutcomeNoResources:
+		return "no resources"
+
+	default:
+		return "unknown"
+	}
+}
 
 // resourceBucketer implements basic resource bucketing for local resource
 // conservation.
