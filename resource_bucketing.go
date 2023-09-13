@@ -68,7 +68,7 @@ func (r *bucketResourceManager) removeHTLC(protected bool,
 		return
 	}
 
-        // TODO: more graceful error handling.
+	// TODO: more graceful error handling.
 	if r.inFlightLiquidity < amount {
 		panic(fmt.Sprintf("In flight: %v less than amount being "+
 			"resolved: %v", r.inFlightLiquidity, amount))
