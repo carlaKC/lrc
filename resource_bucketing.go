@@ -50,7 +50,7 @@ func (r *bucketResourceManager) addHTLC(protected bool,
 		return false
 	}
 
-	if r.inFlightSlots+1 > r.inFlightSlots {
+	if r.inFlightSlots+1 > r.generalSlots {
 		return false
 	}
 
