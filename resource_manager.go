@@ -54,10 +54,6 @@ type ResourceManager struct {
 	// for a htlc to resolve in.
 	resolutionPeriod time.Duration
 
-	// channelLookup provides the ability to look up our currently open
-	// channels.
-	channelLookup ChannelFetcher
-
 	clock clock.Clock
 
 	// A single mutex guarding access to the manager.
@@ -71,8 +67,8 @@ type ChannelFetcher func(lnwire.ShortChannelID) (*ChannelInfo, error)
 // over the window scaled by the multiplier.
 func NewReputationManager(revenueWindow time.Duration,
 	reputationMultiplier int, resolutionPeriod time.Duration,
-	clock clock.Clock, protectedPercentage uint64,
-	getChannel ChannelFetcher) (*ResourceManager, error) {
+	clock clock.Clock, protectedPercentage uint64) (*ResourceManager,
+	error) {
 
 	if protectedPercentage > 100 {
 		return nil, fmt.Errorf("Percentage: %v > 100",
@@ -92,7 +88,6 @@ func NewReputationManager(revenueWindow time.Duration,
 			map[lnwire.ShortChannelID]*targetChannelTracker,
 		),
 		resolutionPeriod: resolutionPeriod,
-		channelLookup:    getChannel,
 		clock:            clock,
 	}, nil
 }
@@ -101,21 +96,26 @@ func NewReputationManager(revenueWindow time.Duration,
 // manager, creating a new decaying average if one if not found. This function
 // returns a pointer to the map entry which can be used to mutate its
 // underlying value.
-func (r *ResourceManager) getTargetChannel(
-	channel lnwire.ShortChannelID) (*targetChannelTracker, error) {
-
-	chanInfo, err := r.channelLookup(channel)
-	if err != nil {
-		return nil, err
-	}
+func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
+	chanInfo *ChannelInfo) (*targetChannelTracker, error) {
 
 	if r.targetChannels[channel] == nil {
 		r.targetChannels[channel] = newTargetChannelTracker(
-			r.clock, r.revenueWindow, chanInfo, r.protectedPercentage,
+			r.clock, r.revenueWindow, chanInfo,
+			r.protectedPercentage,
 		)
 	}
 
 	return r.targetChannels[channel], nil
+}
+
+// lookupTargetChannel fetches a target channel entry from our map without
+// creating one if it does not exist. This means that the return value here
+// may be nil.
+func (r *ResourceManager) lookupTargetChannel(
+	channel lnwire.ShortChannelID) *targetChannelTracker {
+
+	return r.targetChannels[channel]
 }
 
 // getChannelReputation looks up a channel's reputation tracker in the
@@ -166,13 +166,15 @@ func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
 // has been added to internal state and must be cleared out using ResolveHTLC.
 // If it returns false, it assumes that the HTLC will be failed back and does
 // not expect any further resolution notification.
-func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome,
-	error) {
+func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
+	chanOutInfo *ChannelInfo) (ForwardOutcome, error) {
 
 	r.Lock()
 	defer r.Unlock()
 
-	outgoingChannel, err := r.getTargetChannel(htlc.OutgoingChannel)
+	outgoingChannel, err := r.getTargetChannel(
+		htlc.OutgoingChannel, chanOutInfo,
+	)
 	if err != nil {
 		return ForwardOutcomeError, err
 	}
@@ -228,11 +230,10 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) {
 
 	// Add the fees for the forward to the outgoing channel _if_ the
 	// HTLC was successful.
-	outgoingChannel, err := r.getTargetChannel(htlc.OutgoingChannel)
-	if err != nil {
-		// Note: we don't expect an error here because we expect the
-		// outgoing channel to have already been created so we can
-		// panic.
+	outgoingChannel := r.lookupTargetChannel(htlc.OutgoingChannel)
+	if outgoingChannel == nil {
+		// We expect a channel to be found if we've already forwarded
+		// it.
 		panic(fmt.Sprintf("Outgoing channel: %v not found on resolve",
 			htlc.OutgoingChannel))
 	}
