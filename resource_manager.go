@@ -92,6 +92,7 @@ func NewReputationManager(revenueWindow time.Duration,
 			map[lnwire.ShortChannelID]*targetChannelTracker,
 		),
 		resolutionPeriod: resolutionPeriod,
+		channelLookup:    getChannel,
 		clock:            clock,
 	}, nil
 }
