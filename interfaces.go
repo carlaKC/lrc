@@ -6,21 +6,54 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
-// LocalReputationManager is an interface representing an entity that tracks
+// LocalResourceManager is an interface representing an entity that tracks
 // the reputation of channel peers based on HTLC forwarding behavior.
-type LocalReputationManager interface {
-	// SufficientReputation returns a boolean indicating whether a proposed
-	// HTLC forward has sufficient reputation for the outgoing channel
-	// requested.
-	SufficientReputation(htlc *ProposedHTLC) bool
-
+type LocalResourceManager interface {
 	// ForwardHTLC updates the reputation manager to reflect that a
 	// proposed HTLC has been forwarded.
-	ForwardHTLC(htlc *ProposedHTLC)
+	ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome, error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
 	// in-flight HLTC has been resolved.
 	ResolveHTLC(htlc *ResolvedHLTC)
+}
+
+// ForwardOutcome represents the various forwarding outcomes for a proposed
+// HTLC forward.
+type ForwardOutcome int
+
+const (
+	// ForwardOutcomeError covers the zero values for error return so
+	// that we don't return a meaningful enum by mistake.
+	ForwardOutcomeError ForwardOutcome = iota
+
+	// ForwardOutcomeNoResources means that a HTLC should be dropped
+	// because the resource bucket that it qualifies for is full.
+	ForwardOutcomeNoResources
+
+	// ForwardOutcomeUnendorsed means that the HTLC should be forwarded but
+	// not endorsed.
+	ForwardOutcomeUnendorsed
+
+	// ForwardOutcomeEndorsed means that the HTLC should be forwarded
+	// with a positive endorsement signal.
+	ForwardOutcomeEndorsed
+)
+
+// resourceBucketer implements basic resource bucketing for local resource
+// conservation.
+type resourceBucketer interface {
+	// addHTLC poses a HTLC to the resource manager for addition to its
+	// appropriate bucket. If there is space for the HTLC, this call will
+	// update internal state and return true. If the bucket is full, the
+	// resource manager will return false and its state will remain
+	// unchanged.
+	addHTLC(protected bool, amount lnwire.MilliSatoshi) bool
+
+	// removeHTLC updates the resource manager to remove an in-flight HTLC
+	// from its appropriate bucket. Note that this must *only* be called
+	// for HTLCs that were added with a true response from addHTLC.
+	removeHTLC(protected bool, amount lnwire.MilliSatoshi)
 }
 
 // ProposedHTLC provides information about a HTLC has has been locked in on
@@ -41,12 +74,20 @@ type ProposedHTLC struct {
 	// this HTLC as endorsed.
 	IncomingEndorsed bool
 
-	// ForwardingFee is the value that is offered by the HTLC.
-	ForwardingFee lnwire.MilliSatoshi
+	// IncomingAmount is the amount of the HTLC on the incoming channel.
+	IncomingAmount lnwire.MilliSatoshi
+
+	// OutgoingAmount is the amount of the HTLC on the outgoing channel.
+	OutgoingAmount lnwire.MilliSatoshi
 
 	// CltvExpiryDelta is the difference between the block height at which
 	// the HTLC was forwarded and its outgoing_cltv_expiry.
 	CltvExpiryDelta uint32
+}
+
+// ForwardingFee returns the fee paid by a htlc.
+func (p *ProposedHTLC) ForwardingFee() lnwire.MilliSatoshi {
+	return p.IncomingAmount - p.OutgoingAmount
 }
 
 // InFlightHTLC tracks a HTLC forward that is currently in flight.
@@ -54,6 +95,11 @@ type InFlightHTLC struct {
 	// TimestampAdded is the time at which the incoming HTLC was added to
 	// the incoming channel.
 	TimestampAdded time.Time
+
+	// OutgoingEndorsed indicates whether the outgoing HLTC was endorsed
+	// (and thus, that it occupied protected resources on the outgoing
+	// channel).
+	OutgoingEndorsed bool
 
 	// ProposedHTLC contains the original details of the HTLC that was
 	// forwarded to us.
@@ -76,4 +122,14 @@ type ResolvedHLTC struct {
 
 	// Success is true if the HTLC was fulfilled.
 	Success bool
+}
+
+// ChannelInfo provides information about a channel's routing restrictions.
+type ChannelInfo struct {
+	// InFlightHTLC is the total number of htlcs allowed in flight.
+	InFlightHTLC uint64
+
+	// InFlightLiquidity is the total amount of liquidity allowed in
+	// flight.
+	InFlightLiquidity lnwire.MilliSatoshi
 }
