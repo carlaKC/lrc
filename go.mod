@@ -1,4 +1,4 @@
-module github.com/carlakc/localreputation
+module github.com/carlakc/lrc
 
 go 1.20
 
