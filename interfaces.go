@@ -10,8 +10,11 @@ import (
 // the reputation of channel peers based on HTLC forwarding behavior.
 type LocalResourceManager interface {
 	// ForwardHTLC updates the reputation manager to reflect that a
-	// proposed HTLC has been forwarded.
-	ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome, error)
+	// proposed HTLC has been forwarded. It requires the forwarding 
+        // restrictions of the outgoing channel to implement bucketing 
+        // appropriately.
+	ForwardHTLC(htlc *ProposedHTLC, info *ChannelInfo) (ForwardOutcome,
+		error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
 	// in-flight HLTC has been resolved.
