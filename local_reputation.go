@@ -11,12 +11,12 @@ import (
 
 // Compile time check that ReputationManager implements the
 // LocalReputationManager interface.
-var _ LocalResourceManager = (*ReputationManager)(nil)
+var _ LocalResourceManager = (*ResourceManager)(nil)
 
-// ReputationManager tracks local reputation earned by incoming channels, and
+// ResourceManager tracks local reputation earned by incoming channels, and
 // the thresholds required to earn endorsement on the outgoing channels
-// required.
-type ReputationManager struct {
+// required to implement resource bucketing for a node's channels.
+type ResourceManager struct {
 	// protectedPercentage is the percentage of liquidity and slots that
 	// are reserved for endorsed HTLCs from peers with sufficient
 	// reputation.
@@ -68,14 +68,14 @@ type ChannelFetcher func(lnwire.ShortChannelID) (*ChannelInfo, error)
 func NewReputationManager(revenueWindow time.Duration,
 	reputationMultiplier int, resolutionPeriod time.Duration,
 	clock clock.Clock, protectedPercentage uint64,
-	getChannel ChannelFetcher) (*ReputationManager, error) {
+	getChannel ChannelFetcher) (*ResourceManager, error) {
 
 	if protectedPercentage > 100 {
 		return nil, fmt.Errorf("Percentage: %v > 100",
 			protectedPercentage)
 	}
 
-	return &ReputationManager{
+	return &ResourceManager{
 		protectedPercentage: protectedPercentage,
 		revenueWindow:       revenueWindow,
 		reputationWindow: revenueWindow * time.Duration(
@@ -96,7 +96,7 @@ func NewReputationManager(revenueWindow time.Duration,
 // manager, creating a new decaying average if one if not found. This function
 // returns a pointer to the map entry which can be used to mutate its
 // underlying value.
-func (r *ReputationManager) getTargetChannel(
+func (r *ResourceManager) getTargetChannel(
 	channel lnwire.ShortChannelID) (*targetChannelTracker, error) {
 
 	chanInfo, err := r.channelLookup(channel)
@@ -117,7 +117,7 @@ func (r *ReputationManager) getTargetChannel(
 // reputation manager, creating a new tracker if one is not found. This
 // function returns a pointer to the map entry which can be used to mutate its
 // underlying value.
-func (r *ReputationManager) getChannelReputation(
+func (r *ResourceManager) getChannelReputation(
 	channel lnwire.ShortChannelID) *reputationTracker {
 
 	if r.channelReputation[channel] == nil {
@@ -135,7 +135,7 @@ func (r *ReputationManager) getChannelReputation(
 // sufficientReputation returns a boolean indicating whether the forwarding
 // peer has sufficient reputation to forward the proposed htlc over the
 // outgoing channel that they have requested.
-func (r *ReputationManager) sufficientReputation(htlc *ProposedHTLC,
+func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
 	outgoingChannelRevenue float64) bool {
 
 	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
@@ -161,7 +161,7 @@ func (r *ReputationManager) sufficientReputation(htlc *ProposedHTLC,
 // has been added to internal state and must be cleared out using ResolveHTLC.
 // If it returns false, it assumes that the HTLC will be failed back and does
 // not expect any further resolution notification.
-func (r *ReputationManager) ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome,
+func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome,
 	error) {
 
 	outgoingChannel, err := r.getTargetChannel(htlc.OutgoingChannel)
@@ -202,7 +202,7 @@ func (r *ReputationManager) ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome,
 
 // ResolveHTLC updates the reputation manager's state to reflect the
 // resolution
-func (r *ReputationManager) ResolveHTLC(htlc *ResolvedHLTC) {
+func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) {
 	// Fetch the in flight HTLC from the incoming channel and add its
 	// effective fees to the incoming channel's reputation.
 	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
@@ -236,7 +236,7 @@ func (r *ReputationManager) ResolveHTLC(htlc *ResolvedHLTC) {
 	)
 }
 
-func (r *ReputationManager) effectiveFees(htlc *InFlightHTLC,
+func (r *ResourceManager) effectiveFees(htlc *InFlightHTLC,
 	success bool) float64 {
 
 	resolutionTime := r.clock.Now().Sub(htlc.TimestampAdded).Seconds()
