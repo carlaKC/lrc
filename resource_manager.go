@@ -1,4 +1,4 @@
-package localreputation
+package lrc
 
 import (
 	"fmt"
