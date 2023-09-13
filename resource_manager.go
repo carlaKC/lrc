@@ -3,6 +3,7 @@ package localreputation
 import (
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/lightningnetwork/lnd/clock"
@@ -58,6 +59,9 @@ type ResourceManager struct {
 	channelLookup ChannelFetcher
 
 	clock clock.Clock
+
+	// A single mutex guarding access to the manager.
+	sync.Mutex
 }
 
 type ChannelFetcher func(lnwire.ShortChannelID) (*ChannelInfo, error)
@@ -164,6 +168,9 @@ func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
 func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome,
 	error) {
 
+	r.Lock()
+	defer r.Unlock()
+
 	outgoingChannel, err := r.getTargetChannel(htlc.OutgoingChannel)
 	if err != nil {
 		return ForwardOutcomeError, err
@@ -203,6 +210,9 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome,
 // ResolveHTLC updates the reputation manager's state to reflect the
 // resolution
 func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) {
+	r.Lock()
+	defer r.Unlock()
+
 	// Fetch the in flight HTLC from the incoming channel and add its
 	// effective fees to the incoming channel's reputation.
 	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
