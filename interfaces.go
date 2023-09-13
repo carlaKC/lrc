@@ -6,9 +6,9 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
-// LocalReputationManager is an interface representing an entity that tracks
+// LocalResourceManager is an interface representing an entity that tracks
 // the reputation of channel peers based on HTLC forwarding behavior.
-type LocalReputationManager interface {
+type LocalResourceManager interface {
 	// ForwardHTLC updates the reputation manager to reflect that a
 	// proposed HTLC has been forwarded.
 	ForwardHTLC(htlc *ProposedHTLC) (ForwardOutcome, error)

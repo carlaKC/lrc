@@ -11,7 +11,7 @@ import (
 
 // Compile time check that ReputationManager implements the
 // LocalReputationManager interface.
-var _ LocalReputationManager = (*ReputationManager)(nil)
+var _ LocalResourceManager = (*ReputationManager)(nil)
 
 // ReputationManager tracks local reputation earned by incoming channels, and
 // the thresholds required to earn endorsement on the outgoing channels
