@@ -17,8 +17,10 @@ type LocalResourceManager interface {
 		error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
-	// in-flight HLTC has been resolved.
-	ResolveHTLC(htlc *ResolvedHLTC)
+	// in-flight HLTC has been resolved. It returs the in flight HTLC as
+	// tracked by the manager. If the HTLC is not known, it may return
+	// nil.
+	ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC
 }
 
 // ForwardOutcome represents the various forwarding outcomes for a proposed

@@ -212,7 +212,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 
 // ResolveHTLC updates the reputation manager's state to reflect the
 // resolution
-func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) {
+func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC {
 	r.Lock()
 	defer r.Unlock()
 
@@ -221,7 +221,7 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) {
 	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
 	inFlight, ok := incomingChannel.inFlightHTLCs[htlc.IncomingIndex]
 	if !ok {
-		return
+		return nil
 	}
 
 	delete(incomingChannel.inFlightHTLCs, inFlight.IncomingIndex)
@@ -246,6 +246,8 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) {
 	outgoingChannel.resourceBuckets.removeHTLC(
 		inFlight.OutgoingEndorsed, inFlight.OutgoingAmount,
 	)
+
+	return inFlight
 }
 
 func (r *ResourceManager) effectiveFees(htlc *InFlightHTLC,
