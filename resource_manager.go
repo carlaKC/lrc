@@ -200,7 +200,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	// HTLCs on the incoming channel, returning true indicating that
 	// we're happy for the HTLC to proceed.
 	r.getChannelReputation(htlc.IncomingChannel).addInFlight(
-		htlc, htlcProtected,
+		htlc, NewEndorsementSignal(htlcProtected),
 	)
 
 	if htlcProtected {
@@ -244,7 +244,8 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC {
 
 	// Clear out the resources in our resource bucket regardless of outcome.
 	outgoingChannel.resourceBuckets.removeHTLC(
-		inFlight.OutgoingEndorsed, inFlight.OutgoingAmount,
+		inFlight.OutgoingEndorsed == EndorsementTrue,
+		inFlight.OutgoingAmount,
 	)
 
 	return inFlight
@@ -316,7 +317,7 @@ type reputationTracker struct {
 // addInFlight updates the outgoing channel's view to include a new in flight
 // HTLC.
 func (r *reputationTracker) addInFlight(htlc *ProposedHTLC,
-	outgoingEndorsed bool) {
+	outgoingEndorsed Endorsement) {
 
 	inFlightHTLC := &InFlightHTLC{
 		TimestampAdded:   r.revenue.clock.Now(),

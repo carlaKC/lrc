@@ -98,6 +98,16 @@ const(
         EndorsementTrue
 )
 
+// NewEndorsementSignal returns the enum representation of a boolean 
+// endorsement.
+func NewEndorsementSignal(endorse bool) Endorsement{
+        if endorse{
+                return EndorsementTrue
+        }
+
+        return EndorsementFalse
+}
+
 // ProposedHTLC provides information about a HTLC has has been locked in on
 // our incoming channel, but not yet forwarded.
 type ProposedHTLC struct {
@@ -141,7 +151,7 @@ type InFlightHTLC struct {
 	// OutgoingEndorsed indicates whether the outgoing HLTC was endorsed
 	// (and thus, that it occupied protected resources on the outgoing
 	// channel).
-	OutgoingEndorsed bool
+	OutgoingEndorsed Endorsement
 
 	// ProposedHTLC contains the original details of the HTLC that was
 	// forwarded to us.
