@@ -81,6 +81,23 @@ type resourceBucketer interface {
 	removeHTLC(protected bool, amount lnwire.MilliSatoshi)
 }
 
+// Endorsement represents the endorsement signaling that is passed along with 
+// a HTLC.
+type Endorsement uint8
+
+const(
+        // EndorsementNone indicates that the TLV was not present.
+        EndorsementNone Endorsement = iota
+
+        // EndorsementFalse indicates that the TLV was present with a zero 
+        // value.
+        EndorsementFalse
+
+        // EndorsementTrue indicates that the TLV was present with a non-zero 
+        // value.
+        EndorsementTrue
+)
+
 // ProposedHTLC provides information about a HTLC has has been locked in on
 // our incoming channel, but not yet forwarded.
 type ProposedHTLC struct {
@@ -97,7 +114,7 @@ type ProposedHTLC struct {
 
 	// IncomingEndorsed indicates whether the incoming channel forwarded
 	// this HTLC as endorsed.
-	IncomingEndorsed bool
+	IncomingEndorsed Endorsement
 
 	// IncomingAmount is the amount of the HTLC on the incoming channel.
 	IncomingAmount lnwire.MilliSatoshi

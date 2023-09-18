@@ -183,7 +183,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	reputation := r.sufficientReputation(
 		htlc, outgoingChannel.revenue.getValue(),
 	)
-	htlcProtected := reputation && htlc.IncomingEndorsed
+	htlcProtected := reputation && htlc.IncomingEndorsed == EndorsementTrue
 
 	// Next, check whether there is space for the HTLC in the assigned
 	// bucket on the outgoing channel. If there is no space, we return
@@ -263,11 +263,11 @@ func (r *ResourceManager) effectiveFees(htlc *InFlightHTLC,
 
 	switch {
 	// Successful, endorsed HTLC.
-	case htlc.IncomingEndorsed && success:
+	case htlc.IncomingEndorsed == EndorsementTrue && success:
 		return fee - opportunityCost
 
 		// Failed, endorsed HTLC.
-	case htlc.IncomingEndorsed:
+	case htlc.IncomingEndorsed == EndorsementTrue:
 		return -1 * opportunityCost
 
 	// Successful, unendorsed HTLC.
