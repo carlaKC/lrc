@@ -17,8 +17,10 @@ type LocalResourceManager interface {
 		error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
-	// in-flight HLTC has been resolved.
-	ResolveHTLC(htlc *ResolvedHLTC)
+	// in-flight HLTC has been resolved. It returs the in flight HTLC as
+	// tracked by the manager. If the HTLC is not known, it may return
+	// nil.
+	ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC
 }
 
 // ForwardOutcome represents the various forwarding outcomes for a proposed
@@ -79,6 +81,33 @@ type resourceBucketer interface {
 	removeHTLC(protected bool, amount lnwire.MilliSatoshi)
 }
 
+// Endorsement represents the endorsement signaling that is passed along with 
+// a HTLC.
+type Endorsement uint8
+
+const(
+        // EndorsementNone indicates that the TLV was not present.
+        EndorsementNone Endorsement = iota
+
+        // EndorsementFalse indicates that the TLV was present with a zero 
+        // value.
+        EndorsementFalse
+
+        // EndorsementTrue indicates that the TLV was present with a non-zero 
+        // value.
+        EndorsementTrue
+)
+
+// NewEndorsementSignal returns the enum representation of a boolean 
+// endorsement.
+func NewEndorsementSignal(endorse bool) Endorsement{
+        if endorse{
+                return EndorsementTrue
+        }
+
+        return EndorsementFalse
+}
+
 // ProposedHTLC provides information about a HTLC has has been locked in on
 // our incoming channel, but not yet forwarded.
 type ProposedHTLC struct {
@@ -95,7 +124,7 @@ type ProposedHTLC struct {
 
 	// IncomingEndorsed indicates whether the incoming channel forwarded
 	// this HTLC as endorsed.
-	IncomingEndorsed bool
+	IncomingEndorsed Endorsement
 
 	// IncomingAmount is the amount of the HTLC on the incoming channel.
 	IncomingAmount lnwire.MilliSatoshi
@@ -122,7 +151,7 @@ type InFlightHTLC struct {
 	// OutgoingEndorsed indicates whether the outgoing HLTC was endorsed
 	// (and thus, that it occupied protected resources on the outgoing
 	// channel).
-	OutgoingEndorsed bool
+	OutgoingEndorsed Endorsement
 
 	// ProposedHTLC contains the original details of the HTLC that was
 	// forwarded to us.

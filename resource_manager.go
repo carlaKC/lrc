@@ -183,7 +183,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	reputation := r.sufficientReputation(
 		htlc, outgoingChannel.revenue.getValue(),
 	)
-	htlcProtected := reputation && htlc.IncomingEndorsed
+	htlcProtected := reputation && htlc.IncomingEndorsed == EndorsementTrue
 
 	// Next, check whether there is space for the HTLC in the assigned
 	// bucket on the outgoing channel. If there is no space, we return
@@ -200,7 +200,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	// HTLCs on the incoming channel, returning true indicating that
 	// we're happy for the HTLC to proceed.
 	r.getChannelReputation(htlc.IncomingChannel).addInFlight(
-		htlc, htlcProtected,
+		htlc, NewEndorsementSignal(htlcProtected),
 	)
 
 	if htlcProtected {
@@ -212,7 +212,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 
 // ResolveHTLC updates the reputation manager's state to reflect the
 // resolution
-func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) {
+func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC {
 	r.Lock()
 	defer r.Unlock()
 
@@ -221,7 +221,7 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) {
 	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
 	inFlight, ok := incomingChannel.inFlightHTLCs[htlc.IncomingIndex]
 	if !ok {
-		return
+		return nil
 	}
 
 	delete(incomingChannel.inFlightHTLCs, inFlight.IncomingIndex)
@@ -244,8 +244,11 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) {
 
 	// Clear out the resources in our resource bucket regardless of outcome.
 	outgoingChannel.resourceBuckets.removeHTLC(
-		inFlight.OutgoingEndorsed, inFlight.OutgoingAmount,
+		inFlight.OutgoingEndorsed == EndorsementTrue,
+		inFlight.OutgoingAmount,
 	)
+
+	return inFlight
 }
 
 func (r *ResourceManager) effectiveFees(htlc *InFlightHTLC,
@@ -261,11 +264,11 @@ func (r *ResourceManager) effectiveFees(htlc *InFlightHTLC,
 
 	switch {
 	// Successful, endorsed HTLC.
-	case htlc.IncomingEndorsed && success:
+	case htlc.IncomingEndorsed == EndorsementTrue && success:
 		return fee - opportunityCost
 
 		// Failed, endorsed HTLC.
-	case htlc.IncomingEndorsed:
+	case htlc.IncomingEndorsed == EndorsementTrue:
 		return -1 * opportunityCost
 
 	// Successful, unendorsed HTLC.
@@ -314,7 +317,7 @@ type reputationTracker struct {
 // addInFlight updates the outgoing channel's view to include a new in flight
 // HTLC.
 func (r *reputationTracker) addInFlight(htlc *ProposedHTLC,
-	outgoingEndorsed bool) {
+	outgoingEndorsed Endorsement) {
 
 	inFlightHTLC := &InFlightHTLC{
 		TimestampAdded:   r.revenue.clock.Now(),
