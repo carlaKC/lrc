@@ -17,10 +17,10 @@ type LocalResourceManager interface {
 		error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
-	// in-flight HLTC has been resolved. It returs the in flight HTLC as
+	// in-flight htlc has been resolved. It returs the in flight HTLC as
 	// tracked by the manager. If the HTLC is not known, it may return
 	// nil.
-	ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC
+	ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC
 }
 
 // ForwardOutcome represents the various forwarding outcomes for a proposed
@@ -148,7 +148,7 @@ type InFlightHTLC struct {
 	// the incoming channel.
 	TimestampAdded time.Time
 
-	// OutgoingEndorsed indicates whether the outgoing HLTC was endorsed
+	// OutgoingEndorsed indicates whether the outgoing htlc was endorsed
 	// (and thus, that it occupied protected resources on the outgoing
 	// channel).
 	OutgoingEndorsed Endorsement
@@ -159,8 +159,8 @@ type InFlightHTLC struct {
 	*ProposedHTLC
 }
 
-// ResolvedHLTC summarizes the resolution of an in-flight HTLC.
-type ResolvedHLTC struct {
+// ResolvedHTLC summarizes the resolution of an in-flight HTLC.
+type ResolvedHTLC struct {
 	// IncomingIndex is the HTLC ID on the incoming link.
 	IncomingIndex int
 

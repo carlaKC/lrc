@@ -212,7 +212,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 
 // ResolveHTLC updates the reputation manager's state to reflect the
 // resolution
-func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC {
+func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	r.Lock()
 	defer r.Unlock()
 
@@ -349,7 +349,7 @@ func (r *reputationTracker) inFlightHTLCRisk(
 	return inFlightRisk
 }
 
-// outstandingRisk calculates the outstanding risk of in-flight HLTCs.
+// outstandingRisk calculates the outstanding risk of in-flight HTLCs.
 func outstandingRisk(htlc *ProposedHTLC,
 	resolutionPeriod time.Duration) float64 {
 
