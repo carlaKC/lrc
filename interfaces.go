@@ -81,31 +81,31 @@ type resourceBucketer interface {
 	removeHTLC(protected bool, amount lnwire.MilliSatoshi)
 }
 
-// Endorsement represents the endorsement signaling that is passed along with 
+// Endorsement represents the endorsement signaling that is passed along with
 // a HTLC.
 type Endorsement uint8
 
-const(
-        // EndorsementNone indicates that the TLV was not present.
-        EndorsementNone Endorsement = iota
+const (
+	// EndorsementNone indicates that the TLV was not present.
+	EndorsementNone Endorsement = iota
 
-        // EndorsementFalse indicates that the TLV was present with a zero 
-        // value.
-        EndorsementFalse
+	// EndorsementFalse indicates that the TLV was present with a zero
+	// value.
+	EndorsementFalse
 
-        // EndorsementTrue indicates that the TLV was present with a non-zero 
-        // value.
-        EndorsementTrue
+	// EndorsementTrue indicates that the TLV was present with a non-zero
+	// value.
+	EndorsementTrue
 )
 
-// NewEndorsementSignal returns the enum representation of a boolean 
+// NewEndorsementSignal returns the enum representation of a boolean
 // endorsement.
-func NewEndorsementSignal(endorse bool) Endorsement{
-        if endorse{
-                return EndorsementTrue
-        }
+func NewEndorsementSignal(endorse bool) Endorsement {
+	if endorse {
+		return EndorsementTrue
+	}
 
-        return EndorsementFalse
+	return EndorsementFalse
 }
 
 // ProposedHTLC provides information about a HTLC has has been locked in on
