@@ -177,6 +177,9 @@ type InFlightHTLC struct {
 
 // ResolvedHTLC summarizes the resolution of an in-flight HTLC.
 type ResolvedHTLC struct {
+	// TimestampSettled is the time at which a htlc was resolved.
+	TimestampSettled time.Time
+
 	// IncomingIndex is the HTLC ID on the incoming link.
 	IncomingIndex int
 

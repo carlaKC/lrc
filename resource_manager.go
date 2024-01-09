@@ -225,7 +225,9 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	}
 
 	delete(incomingChannel.inFlightHTLCs, inFlight.IncomingIndex)
-	effectiveFees := r.effectiveFees(inFlight, htlc.Success)
+	effectiveFees := r.effectiveFees(
+		htlc.TimestampSettled, inFlight, htlc.Success,
+	)
 	incomingChannel.revenue.add(effectiveFees)
 
 	// Add the fees for the forward to the outgoing channel _if_ the
@@ -251,10 +253,10 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	return inFlight
 }
 
-func (r *ResourceManager) effectiveFees(htlc *InFlightHTLC,
-	success bool) float64 {
+func (r *ResourceManager) effectiveFees(timestampSettled time.Time,
+	htlc *InFlightHTLC, success bool) float64 {
 
-	resolutionTime := r.clock.Now().Sub(htlc.TimestampAdded).Seconds()
+	resolutionTime := timestampSettled.Sub(htlc.TimestampAdded).Seconds()
 	resolutionSeconds := r.resolutionPeriod.Seconds()
 	fee := float64(htlc.ForwardingFee())
 
