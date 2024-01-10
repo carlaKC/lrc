@@ -98,6 +98,22 @@ const (
 	EndorsementTrue
 )
 
+func (e Endorsement) String() string {
+	switch e {
+	case EndorsementNone:
+		return "NULL"
+
+	case EndorsementTrue:
+		return "T"
+
+	case EndorsementFalse:
+		return "F"
+
+	default:
+		return "Unknown"
+	}
+}
+
 // NewEndorsementSignal returns the enum representation of a boolean
 // endorsement.
 func NewEndorsementSignal(endorse bool) Endorsement {
