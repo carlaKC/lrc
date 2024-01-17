@@ -9,6 +9,13 @@ import (
 // LocalResourceManager is an interface representing an entity that tracks
 // the reputation of channel peers based on HTLC forwarding behavior.
 type LocalResourceManager interface {
+	// AddHistoricalHTLCs bootstraps the resource manager with historically
+	// forwarded htlcs to build up state on start. It must be provided with
+	// a map of all the channels that were used as outgoing forwarding
+	// channels over the period that the htlcs were processed.
+	AddHistoricalHTLCs(htlcs []*ForwardedHTLC,
+		channels map[lnwire.ShortChannelID]ChannelInfo) error
+
 	// ForwardHTLC updates the reputation manager to reflect that a
 	// proposed HTLC has been forwarded. It requires the forwarding
 	// restrictions of the outgoing channel to implement bucketing
@@ -17,10 +24,10 @@ type LocalResourceManager interface {
 		error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
-	// in-flight HLTC has been resolved. It returs the in flight HTLC as
+	// in-flight htlc has been resolved. It returs the in flight HTLC as
 	// tracked by the manager. If the HTLC is not known, it may return
 	// nil.
-	ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC
+	ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC
 }
 
 // ForwardOutcome represents the various forwarding outcomes for a proposed
@@ -81,31 +88,47 @@ type resourceBucketer interface {
 	removeHTLC(protected bool, amount lnwire.MilliSatoshi)
 }
 
-// Endorsement represents the endorsement signaling that is passed along with 
+// Endorsement represents the endorsement signaling that is passed along with
 // a HTLC.
 type Endorsement uint8
 
-const(
-        // EndorsementNone indicates that the TLV was not present.
-        EndorsementNone Endorsement = iota
+const (
+	// EndorsementNone indicates that the TLV was not present.
+	EndorsementNone Endorsement = iota
 
-        // EndorsementFalse indicates that the TLV was present with a zero 
-        // value.
-        EndorsementFalse
+	// EndorsementFalse indicates that the TLV was present with a zero
+	// value.
+	EndorsementFalse
 
-        // EndorsementTrue indicates that the TLV was present with a non-zero 
-        // value.
-        EndorsementTrue
+	// EndorsementTrue indicates that the TLV was present with a non-zero
+	// value.
+	EndorsementTrue
 )
 
-// NewEndorsementSignal returns the enum representation of a boolean 
-// endorsement.
-func NewEndorsementSignal(endorse bool) Endorsement{
-        if endorse{
-                return EndorsementTrue
-        }
+func (e Endorsement) String() string {
+	switch e {
+	case EndorsementNone:
+		return "NULL"
 
-        return EndorsementFalse
+	case EndorsementTrue:
+		return "T"
+
+	case EndorsementFalse:
+		return "F"
+
+	default:
+		return "Unknown"
+	}
+}
+
+// NewEndorsementSignal returns the enum representation of a boolean
+// endorsement.
+func NewEndorsementSignal(endorse bool) Endorsement {
+	if endorse {
+		return EndorsementTrue
+	}
+
+	return EndorsementFalse
 }
 
 // ProposedHTLC provides information about a HTLC has has been locked in on
@@ -148,7 +171,7 @@ type InFlightHTLC struct {
 	// the incoming channel.
 	TimestampAdded time.Time
 
-	// OutgoingEndorsed indicates whether the outgoing HLTC was endorsed
+	// OutgoingEndorsed indicates whether the outgoing htlc was endorsed
 	// (and thus, that it occupied protected resources on the outgoing
 	// channel).
 	OutgoingEndorsed Endorsement
@@ -159,8 +182,11 @@ type InFlightHTLC struct {
 	*ProposedHTLC
 }
 
-// ResolvedHLTC summarizes the resolution of an in-flight HTLC.
-type ResolvedHLTC struct {
+// ResolvedHTLC summarizes the resolution of an in-flight HTLC.
+type ResolvedHTLC struct {
+	// TimestampSettled is the time at which a htlc was resolved.
+	TimestampSettled time.Time
+
 	// IncomingIndex is the HTLC ID on the incoming link.
 	IncomingIndex int
 
@@ -174,6 +200,17 @@ type ResolvedHLTC struct {
 
 	// Success is true if the HTLC was fulfilled.
 	Success bool
+}
+
+// ForwardedHTLC represents a HTLC that our node has previously forwarded.
+type ForwardedHTLC struct {
+	// InFlightHTLC contains the original forwarding details of the HTLC.
+	InFlightHTLC
+
+	// Resolution contains the details of the HTLC's resolution if it has
+	// been finally settled or failed. If the HTLC is still in flight, this
+	// field should be nil.
+	Resolution *ResolvedHTLC
 }
 
 // ChannelInfo provides information about a channel's routing restrictions.

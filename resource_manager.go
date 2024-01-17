@@ -8,6 +8,7 @@ import (
 
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/queue"
 )
 
 // Compile time check that ReputationManager implements the
@@ -160,6 +161,131 @@ func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
 	return incomingRevenue > outgoingChannelRevenue+inFlightRisk
 }
 
+type htlcIdxTimestamp struct {
+	ts  time.Time
+	idx int
+}
+
+// Less is used to order PriorityQueueItem's by their release time such that
+// items with the older release time are at the top of the queue.
+//
+// NOTE: Part of the queue.PriorityQueueItem interface.
+func (r *htlcIdxTimestamp) Less(other queue.PriorityQueueItem) bool {
+	return r.ts.Before(other.(*htlcIdxTimestamp).ts)
+}
+
+// AddHistoricalHTLCs bootstraps the resource manger's state with previously
+// forwarded and in flight htlcs on restart. It must be provided with a map of
+// all the channels that were used as outgoing forwarding channels over the
+// period that the htlcs were processed.
+func (r *ResourceManager) AddHistoricalHTLCs(htlcs []*ForwardedHTLC,
+	channels map[lnwire.ShortChannelID]ChannelInfo) error {
+
+	// We need to replay our htlcs in-order so that we can reproduce the
+	// internal state that we'd have reached from forwarding these HTLCs
+	// in real time.
+	addQueue := &queue.PriorityQueue{}
+	removeQueue := &queue.PriorityQueue{}
+
+	for i, htlc := range htlcs {
+		addQueue.Push(&htlcIdxTimestamp{
+			ts:  htlc.InFlightHTLC.TimestampAdded,
+			idx: i,
+		})
+
+		if htlc.Resolution != nil {
+			removeQueue.Push(&htlcIdxTimestamp{
+				ts:  htlc.Resolution.TimestampSettled,
+				idx: i,
+			})
+		}
+	}
+
+	addHtlcFn := func() error {
+		// Lookup the added htlc and its outgoing channel.
+		htlcIdx := addQueue.Pop().(*htlcIdxTimestamp)
+		htlc := htlcs[htlcIdx.idx]
+		chanOut := htlc.InFlightHTLC.OutgoingChannel
+
+		outgoingChannel, ok := channels[chanOut]
+		if !ok {
+			return fmt.Errorf(
+				"outgoing channel not found: %v for "+
+					"replayed HTLC",
+				htlc.InFlightHTLC.OutgoingChannel,
+			)
+		}
+
+		outcome, err := r.ForwardHTLC(
+			htlc.InFlightHTLC.ProposedHTLC, &outgoingChannel,
+		)
+		if err != nil {
+			return err
+		}
+
+		// We only expect to be presented with historical htlcs
+		// that could actually be forwarded, so we sanity check
+		// that we've actually added this htlc to our state.
+		if outcome == ForwardOutcomeNoResources {
+			return fmt.Errorf("historical htlc could not " +
+				"be accommodated")
+		}
+
+		return nil
+	}
+
+	removeHtlcFn := func() error {
+		htlcIdx := removeQueue.Pop().(*htlcIdxTimestamp)
+		htlc := htlcs[htlcIdx.idx]
+
+		if htlc.Resolution == nil {
+			return fmt.Errorf("htlc in resolved queue " +
+				"has no resolution")
+		}
+
+		r.ResolveHTLC(htlc.Resolution)
+		return nil
+	}
+
+	// Now run through our queues, replaying items until we're done.
+	for {
+		var nextAction func() error
+
+	switch {
+		// If there's nothing left in the queues, we're done.
+		case addQueue.Empty() && removeQueue.Empty():
+			return nil
+
+		// There are no more htlc adds, we can process the remainder
+		// of the removals.
+		case addQueue.Empty():
+			nextAction = removeHtlcFn
+
+		// There are no more htlc removals, we can process the
+		// remainder of the adds (ie, there are some in-flight htlcs
+		// to add).
+		case removeQueue.Empty():
+			nextAction = addHtlcFn
+
+		// We have htlcs to add and remove, so we need to pick the
+		// next chronological action.
+		default:
+			addHTLC := addQueue.Top().(*htlcIdxTimestamp)
+			removeHTLC := removeQueue.Top().(*htlcIdxTimestamp)
+
+			if addHTLC.ts.Before(removeHTLC.ts) {
+				nextAction = addHtlcFn
+			} else {
+				nextAction = removeHtlcFn
+			}
+		}
+
+		if err := nextAction(); err != nil {
+			return err
+		}
+	}
+}
+
 // ForwardHTLC returns a boolean indicating whether the HTLC proposed is
 // allowed to proceed based on its reputation, endorsement and resources
 // available on the outgoing channel. If this function returns true, the HTLC
@@ -212,7 +338,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 
 // ResolveHTLC updates the reputation manager's state to reflect the
 // resolution
-func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC {
+func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	r.Lock()
 	defer r.Unlock()
 
@@ -225,7 +351,9 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC {
 	}
 
 	delete(incomingChannel.inFlightHTLCs, inFlight.IncomingIndex)
-	effectiveFees := r.effectiveFees(inFlight, htlc.Success)
+	effectiveFees := r.effectiveFees(
+		htlc.TimestampSettled, inFlight, htlc.Success,
+	)
 	incomingChannel.revenue.add(effectiveFees)
 
 	// Add the fees for the forward to the outgoing channel _if_ the
@@ -251,10 +379,10 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHLTC) *InFlightHTLC {
 	return inFlight
 }
 
-func (r *ResourceManager) effectiveFees(htlc *InFlightHTLC,
-	success bool) float64 {
+func (r *ResourceManager) effectiveFees(timestampSettled time.Time,
+	htlc *InFlightHTLC, success bool) float64 {
 
-	resolutionTime := r.clock.Now().Sub(htlc.TimestampAdded).Seconds()
+	resolutionTime := timestampSettled.Sub(htlc.TimestampAdded).Seconds()
 	resolutionSeconds := r.resolutionPeriod.Seconds()
 	fee := float64(htlc.ForwardingFee())
 
@@ -349,7 +477,7 @@ func (r *reputationTracker) inFlightHTLCRisk(
 	return inFlightRisk
 }
 
-// outstandingRisk calculates the outstanding risk of in-flight HLTCs.
+// outstandingRisk calculates the outstanding risk of in-flight HTLCs.
 func outstandingRisk(htlc *ProposedHTLC,
 	resolutionPeriod time.Duration) float64 {
 
