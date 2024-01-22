@@ -30,6 +30,37 @@ type LocalResourceManager interface {
 	ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC
 }
 
+// ReputationCheck provides the reputation scores that are used to make a
+// forwarding decision for a HTLC. These are surfaced for the sake of debugging
+// and simulation, and wouldn't really be used much in a production
+// implementation.
+type ReputationCheck struct {
+	// IncomingRevenue represents the reputation that the forwarding
+	// channel has accrued over time.
+	IncomingRevenue float64
+
+	// OutgoingRevenue represents the cost of using the outgoing link,
+	// evaluated based on how valuable it has been to us in the past.
+	OutgoingRevenue float64
+
+	// InFlightRisk represents the outstanding risk of all of the
+	// forwarding party's currently in flight HTLCs.
+	InFlightRisk float64
+
+	// HTLCRisk represents the risk of the newly proposed HTLC, should it
+	// be used to jam our channel for its full expiry time.
+	HTLCRisk float64
+}
+
+// SufficientReputation returns a boolean indicating whether a HTLC meets the
+// reputation bar to be forwarded with endorsement.
+func (r *ReputationCheck) SufficientReputation() bool {
+	// The incoming channel has sufficient reputation if:
+	// incoming_channel_revenue - in_flight_risk - htlc_risk
+	//  >= outgoing_link_revenue
+	return r.IncomingRevenue > r.OutgoingRevenue+r.InFlightRisk+r.HTLCRisk
+}
+
 // ForwardOutcome represents the various forwarding outcomes for a proposed
 // HTLC forward.
 type ForwardOutcome int

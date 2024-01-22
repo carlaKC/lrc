@@ -138,11 +138,11 @@ func (r *ResourceManager) getChannelReputation(
 	return r.channelReputation[channel]
 }
 
-// sufficientReputation returns a boolean indicating whether the forwarding
-// peer has sufficient reputation to forward the proposed htlc over the
-// outgoing channel that they have requested.
+// sufficientReputation returns a reputation check that is used to determine
+// whether the forwarding peer has sufficient reputation to forward the
+// proposed htlc over the outgoing channel that they have requested.
 func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
-	outgoingChannelRevenue float64) bool {
+	outgoingChannelRevenue float64) *ReputationCheck {
 
 	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
 	incomingRevenue := incomingChannel.revenue.getValue()
@@ -152,13 +152,12 @@ func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
 		htlc.IncomingChannel, r.resolutionPeriod,
 	)
 
-	// We include the proposed HTLC in our in-flight risk as well, as this
-	// is the risk we're taking on.
-	inFlightRisk += outstandingRisk(htlc, r.resolutionPeriod)
-
-	// The incoming channel has sufficient reputation if:
-	// incoming_channel_revenue - in_flight_risk >= outgoing_link_revenue
-	return incomingRevenue > outgoingChannelRevenue+inFlightRisk
+	return &ReputationCheck{
+		IncomingRevenue: incomingRevenue,
+		OutgoingRevenue: outgoingChannelRevenue,
+		InFlightRisk:    inFlightRisk,
+		HTLCRisk:        outstandingRisk(htlc, r.resolutionPeriod),
+	}
 }
 
 type htlcIdxTimestamp struct {
@@ -309,7 +308,12 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	reputation := r.sufficientReputation(
 		htlc, outgoingChannel.revenue.getValue(),
 	)
-	htlcProtected := reputation && htlc.IncomingEndorsed == EndorsementTrue
+	sufficientRep := reputation.SufficientReputation()
+
+	// The HTLC has access to protected spots if it has sufficient
+	// reputation *and* the incoming htlc was endorsed.
+	htlcProtected := sufficientRep &&
+		htlc.IncomingEndorsed == EndorsementTrue
 
 	// Next, check whether there is space for the HTLC in the assigned
 	// bucket on the outgoing channel. If there is no space, we return
