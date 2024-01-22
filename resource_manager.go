@@ -251,7 +251,7 @@ func (r *ResourceManager) AddHistoricalHTLCs(htlcs []*ForwardedHTLC,
 	for {
 		var nextAction func() error
 
-	switch {
+		switch {
 		// If there's nothing left in the queues, we're done.
 		case addQueue.Empty() && removeQueue.Empty():
 			return nil
