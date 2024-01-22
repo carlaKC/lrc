@@ -20,7 +20,7 @@ type LocalResourceManager interface {
 	// proposed HTLC has been forwarded. It requires the forwarding
 	// restrictions of the outgoing channel to implement bucketing
 	// appropriately.
-	ForwardHTLC(htlc *ProposedHTLC, info *ChannelInfo) (ForwardOutcome,
+	ForwardHTLC(htlc *ProposedHTLC, info *ChannelInfo) (*ForwardDecision,
 		error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
@@ -28,6 +28,17 @@ type LocalResourceManager interface {
 	// tracked by the manager. If the HTLC is not known, it may return
 	// nil.
 	ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC
+}
+
+// ForwardDecision contains the action that should be taken for forwarding
+// a HTLC and debugging details of the values used.
+type ForwardDecision struct {
+	// ReputationCheck contains the numerical values used in making a
+	// reputation decision. This value will be non-nil
+	ReputationCheck
+
+	// ForwardOutcome is the action that the caller should take.
+	ForwardOutcome
 }
 
 // ReputationCheck provides the reputation scores that are used to make a
@@ -66,13 +77,9 @@ func (r *ReputationCheck) SufficientReputation() bool {
 type ForwardOutcome int
 
 const (
-	// ForwardOutcomeError covers the zero values for error return so
-	// that we don't return a meaningful enum by mistake.
-	ForwardOutcomeError ForwardOutcome = iota
-
 	// ForwardOutcomeNoResources means that a HTLC should be dropped
 	// because the resource bucket that it qualifies for is full.
-	ForwardOutcomeNoResources
+	ForwardOutcomeNoResources ForwardOutcome = iota
 
 	// ForwardOutcomeUnendorsed means that the HTLC should be forwarded but
 	// not endorsed.
@@ -85,9 +92,6 @@ const (
 
 func (f ForwardOutcome) String() string {
 	switch f {
-	case ForwardOutcomeError:
-		return "error"
-
 	case ForwardOutcomeEndorsed:
 		return "endorsed"
 

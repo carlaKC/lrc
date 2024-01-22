@@ -225,7 +225,7 @@ func (r *ResourceManager) AddHistoricalHTLCs(htlcs []*ForwardedHTLC,
 		// We only expect to be presented with historical htlcs
 		// that could actually be forwarded, so we sanity check
 		// that we've actually added this htlc to our state.
-		if outcome == ForwardOutcomeNoResources {
+		if outcome.ForwardOutcome == ForwardOutcomeNoResources {
 			return fmt.Errorf("historical htlc could not " +
 				"be accommodated")
 		}
@@ -292,7 +292,7 @@ func (r *ResourceManager) AddHistoricalHTLCs(htlcs []*ForwardedHTLC,
 // If it returns false, it assumes that the HTLC will be failed back and does
 // not expect any further resolution notification.
 func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
-	chanOutInfo *ChannelInfo) (ForwardOutcome, error) {
+	chanOutInfo *ChannelInfo) (*ForwardDecision, error) {
 
 	r.Lock()
 	defer r.Unlock()
@@ -301,7 +301,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 		htlc.OutgoingChannel, chanOutInfo,
 	)
 	if err != nil {
-		return ForwardOutcomeError, err
+		return nil, err
 	}
 
 	// First, check whether the HTLC qualifies for protected resources.
@@ -322,7 +322,10 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 		htlcProtected, htlc.OutgoingAmount,
 	)
 	if !canForward {
-		return ForwardOutcomeNoResources, nil
+		return &ForwardDecision{
+			ReputationCheck: *reputation,
+			ForwardOutcome:  ForwardOutcomeNoResources,
+		}, nil
 	}
 
 	// If there is space for the HTLC, we've accounted for it in our
@@ -334,10 +337,16 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	)
 
 	if htlcProtected {
-		return ForwardOutcomeEndorsed, nil
+		return &ForwardDecision{
+			ReputationCheck: *reputation,
+			ForwardOutcome:  ForwardOutcomeEndorsed,
+		}, nil
 	}
 
-	return ForwardOutcomeUnendorsed, nil
+	return &ForwardDecision{
+		ReputationCheck: *reputation,
+		ForwardOutcome:  ForwardOutcomeUnendorsed,
+	}, nil
 }
 
 // ResolveHTLC updates the reputation manager's state to reflect the
