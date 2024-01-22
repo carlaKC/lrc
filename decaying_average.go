@@ -39,15 +39,15 @@ func newDecayingAverage(clock clock.Clock,
 func (d *decayingAverage) update() {
 	var (
 		now            = d.clock.Now()
-		lastUpdateDiff = d.lastUpdate.Sub(now).Seconds()
+		lastUpdateDiff = now.Sub(d.lastUpdate).Seconds()
 	)
 
-	// Sanity check that the current time is after our last update.
-	if now.Before(d.lastUpdate) {
+	// If no time has passed, we don't need to apply an update.
+	if lastUpdateDiff == 0 {
 		return
 	}
 
-	d.decayRate = math.Pow(d.value*d.decayRate, lastUpdateDiff)
+	d.value = d.value * math.Pow(d.decayRate, lastUpdateDiff)
 }
 
 // getValue updates the decaying average to the present and returns its

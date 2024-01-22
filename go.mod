@@ -5,6 +5,8 @@ go 1.20
 require (
 	github.com/lightningnetwork/lnd v0.15.4-beta
 	github.com/lightningnetwork/lnd/clock v1.1.0
+	github.com/lightningnetwork/lnd/queue v1.1.0
+	github.com/stretchr/testify v1.8.4
 )
 
 require (
@@ -31,14 +33,14 @@ require (
 	github.com/kkdai/bstream v1.0.0 // indirect
 	github.com/lightninglabs/gozmq v0.0.0-20191113021534-d20a764486bf // indirect
 	github.com/lightninglabs/neutrino v0.14.2 // indirect
-	github.com/lightningnetwork/lnd/queue v1.1.0 // indirect
 	github.com/lightningnetwork/lnd/ticker v1.1.0 // indirect
 	github.com/lightningnetwork/lnd/tlv v1.0.3 // indirect
 	github.com/lightningnetwork/lnd/tor v1.0.1 // indirect
 	github.com/miekg/dns v1.1.43 // indirect
-	github.com/stretchr/testify v1.8.4 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
 	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519 // indirect
 	golang.org/x/net v0.0.0-20211015210444-4f30a5c0130f // indirect
 	golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a // indirect
 	golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
