@@ -1,6 +1,7 @@
 package lrc
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -70,6 +71,14 @@ func (r *ReputationCheck) SufficientReputation() bool {
 	// incoming_channel_revenue - in_flight_risk - htlc_risk
 	//  >= outgoing_link_revenue
 	return r.IncomingRevenue > r.OutgoingRevenue+r.InFlightRisk+r.HTLCRisk
+}
+
+// String for a ReputationCheck.
+func (r *ReputationCheck) String() string {
+	return fmt.Sprintf("outgoing revenue threshold: %v vs incoming "+
+		"revenue: %v with in flight risk: %v and htlc risk: %v",
+		r.OutgoingRevenue, r.IncomingRevenue, r.InFlightRisk,
+		r.HTLCRisk)
 }
 
 // ForwardOutcome represents the various forwarding outcomes for a proposed
