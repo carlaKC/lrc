@@ -20,7 +20,7 @@ type LocalResourceManager interface {
 	// proposed HTLC has been forwarded. It requires the forwarding
 	// restrictions of the outgoing channel to implement bucketing
 	// appropriately.
-	ForwardHTLC(htlc *ProposedHTLC, info *ChannelInfo) (ForwardOutcome,
+	ForwardHTLC(htlc *ProposedHTLC, info *ChannelInfo) (*ForwardDecision,
 		error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
@@ -30,18 +30,56 @@ type LocalResourceManager interface {
 	ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC
 }
 
+// ForwardDecision contains the action that should be taken for forwarding
+// a HTLC and debugging details of the values used.
+type ForwardDecision struct {
+	// ReputationCheck contains the numerical values used in making a
+	// reputation decision. This value will be non-nil
+	ReputationCheck
+
+	// ForwardOutcome is the action that the caller should take.
+	ForwardOutcome
+}
+
+// ReputationCheck provides the reputation scores that are used to make a
+// forwarding decision for a HTLC. These are surfaced for the sake of debugging
+// and simulation, and wouldn't really be used much in a production
+// implementation.
+type ReputationCheck struct {
+	// IncomingRevenue represents the reputation that the forwarding
+	// channel has accrued over time.
+	IncomingRevenue float64
+
+	// OutgoingRevenue represents the cost of using the outgoing link,
+	// evaluated based on how valuable it has been to us in the past.
+	OutgoingRevenue float64
+
+	// InFlightRisk represents the outstanding risk of all of the
+	// forwarding party's currently in flight HTLCs.
+	InFlightRisk float64
+
+	// HTLCRisk represents the risk of the newly proposed HTLC, should it
+	// be used to jam our channel for its full expiry time.
+	HTLCRisk float64
+}
+
+// SufficientReputation returns a boolean indicating whether a HTLC meets the
+// reputation bar to be forwarded with endorsement.
+func (r *ReputationCheck) SufficientReputation() bool {
+	// The incoming channel has sufficient reputation if:
+	// incoming_channel_revenue - in_flight_risk - htlc_risk
+	//  >= outgoing_link_revenue
+	return r.IncomingRevenue > r.OutgoingRevenue+r.InFlightRisk+r.HTLCRisk
+}
+
 // ForwardOutcome represents the various forwarding outcomes for a proposed
 // HTLC forward.
 type ForwardOutcome int
 
 const (
-	// ForwardOutcomeError covers the zero values for error return so
-	// that we don't return a meaningful enum by mistake.
-	ForwardOutcomeError ForwardOutcome = iota
-
 	// ForwardOutcomeNoResources means that a HTLC should be dropped
 	// because the resource bucket that it qualifies for is full.
-	ForwardOutcomeNoResources
+	ForwardOutcomeNoResources ForwardOutcome = iota
 
 	// ForwardOutcomeUnendorsed means that the HTLC should be forwarded but
 	// not endorsed.
@@ -54,9 +92,6 @@ const (
 
 func (f ForwardOutcome) String() string {
 	switch f {
-	case ForwardOutcomeError:
-		return "error"
-
 	case ForwardOutcomeEndorsed:
 		return "endorsed"
 
