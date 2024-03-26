@@ -3,6 +3,7 @@ package lrc
 import (
 	"fmt"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -55,6 +56,10 @@ type ResourceManager struct {
 	// for a htlc to resolve in.
 	resolutionPeriod time.Duration
 
+	// channelHistory is a closure that's used to grab the historical
+	// forwards for a channel when we encounter it.
+	channelHistory ChannelHistory
+
 	clock clock.Clock
 
 	// A single mutex guarding access to the manager.
@@ -63,13 +68,20 @@ type ResourceManager struct {
 
 type ChannelFetcher func(lnwire.ShortChannelID) (*ChannelInfo, error)
 
+// ChannelHistory is a closure type used to obtain the historical forwards for
+// a channel. If incomingOnly is true, then it'll filter for forwards where
+// the channel was the incoming nodes. Otherwise, it'll return forwards where
+// the channel was either the incoming or the outgoing link.
+type ChannelHistory func(id lnwire.ShortChannelID,
+	incomingOnly bool) ([]*ForwardedHTLC, error)
+
 // NewReputationManager creates a local reputation manager that will track
 // channel revenue over the window provided, and incoming channel reputation
 // over the window scaled by the multiplier.
 func NewReputationManager(revenueWindow time.Duration,
 	reputationMultiplier int, resolutionPeriod time.Duration,
-	clock clock.Clock, protectedPercentage uint64) (*ResourceManager,
-	error) {
+	clock clock.Clock, channelHistory ChannelHistory,
+	protectedPercentage uint64) (*ResourceManager, error) {
 
 	if protectedPercentage > 100 {
 		return nil, fmt.Errorf("Percentage: %v > 100",
@@ -89,6 +101,7 @@ func NewReputationManager(revenueWindow time.Duration,
 			map[lnwire.ShortChannelID]*targetChannelTracker,
 		),
 		resolutionPeriod: resolutionPeriod,
+		channelHistory:   channelHistory,
 		clock:            clock,
 	}, nil
 }
@@ -101,22 +114,62 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 	chanInfo *ChannelInfo) (*targetChannelTracker, error) {
 
 	if r.targetChannels[channel] == nil {
-		r.targetChannels[channel] = newTargetChannelTracker(
-			r.clock, r.revenueWindow, chanInfo,
-			r.protectedPercentage,
+		var err error
+		r.targetChannels[channel], err = r.newTargetChannel(
+			channel, chanInfo,
 		)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return r.targetChannels[channel], nil
 }
 
-// lookupTargetChannel fetches a target channel entry from our map without
-// creating one if it does not exist. This means that the return value here
-// may be nil.
-func (r *ResourceManager) lookupTargetChannel(
-	channel lnwire.ShortChannelID) *targetChannelTracker {
+// newTargetChannel creates a new target channel tracker for the short channel
+// id provided.
+func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
+	chanInfo *ChannelInfo) (*targetChannelTracker, error) {
 
-	return r.targetChannels[channel]
+	targetChannel := newTargetChannelTracker(
+		r.clock, r.revenueWindow, chanInfo,
+		r.protectedPercentage,
+	)
+
+	// When adding a target channel, we want to account for all of its
+	// forwards so we pull full history for the channel.
+	history, err := r.channelHistory(id, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add the bi-directional revenue for our forwards to the fresh tracker.
+	// We sort by resolved timestamp so that we can reply values for our
+	// decaying average.
+	sort.Slice(history, func(i, j int) bool {
+		return history[i].Resolution.TimestampSettled.Before(
+			history[j].Resolution.TimestampSettled,
+		)
+	})
+
+	for _, h := range history {
+		if !(h.InFlightHTLC.IncomingChannel == id ||
+			h.InFlightHTLC.OutgoingChannel == id) {
+
+			return nil, fmt.Errorf("forwarding history for: "+
+				"%v contains forward htat does not belong "+
+				"to channel (%v -> %v)", id,
+				h.InFlightHTLC.IncomingChannel,
+				h.Resolution.OutgoingChannel)
+		}
+
+		targetChannel.revenue.addAtTime(
+			float64(h.InFlightHTLC.ForwardingFee()),
+			h.Resolution.TimestampSettled,
+		)
+	}
+
+	return targetChannel, nil
 }
 
 // getChannelReputation looks up a channel's reputation tracker in the
@@ -124,27 +177,85 @@ func (r *ResourceManager) lookupTargetChannel(
 // function returns a pointer to the map entry which can be used to mutate its
 // underlying value.
 func (r *ResourceManager) getChannelReputation(
-	channel lnwire.ShortChannelID) *reputationTracker {
+	channel lnwire.ShortChannelID) (*reputationTracker, error) {
 
 	if r.channelReputation[channel] == nil {
-		r.channelReputation[channel] = &reputationTracker{
-			revenue: newDecayingAverage(
-				r.clock, r.reputationWindow,
-			),
-			inFlightHTLCs: make(map[int]*InFlightHTLC),
+		var err error
+		r.channelReputation[channel], err = r.newChannelReputation(
+			channel,
+		)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	return r.channelReputation[channel]
+	return r.channelReputation[channel], nil
+}
+
+// newChannelReputation creates a new channel reputation tracker for the
+// short channel id provided.
+func (r *ResourceManager) newChannelReputation(
+	channel lnwire.ShortChannelID) (*reputationTracker, error) {
+
+	reputationTracker := &reputationTracker{
+		revenue: newDecayingAverage(
+			r.clock, r.reputationWindow,
+		),
+		inFlightHTLCs: make(map[int]*InFlightHTLC),
+	}
+
+	// When adding a reputation tracker, we only want to account for the
+	// incoming HTLCs that contributed to our revenue so we filter our
+	// historical query by incomingOnly.
+	history, err := r.channelHistory(channel, true)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add the bi-directional revenue for our forwards to the fresh
+	// tracker. We sort by resolved timestamp so that we can replay values
+	// for our decaying average.
+	sort.Slice(history, func(i, j int) bool {
+		return history[i].Resolution.TimestampSettled.Before(
+			history[j].Resolution.TimestampSettled,
+		)
+	})
+
+	for _, h := range history {
+		if !(h.InFlightHTLC.IncomingChannel == channel ||
+			h.InFlightHTLC.OutgoingChannel == channel) {
+
+			return nil, fmt.Errorf("forwarding history for: "+
+				"%v contains forward htat does not belong "+
+				"to channel (%v -> %v)", channel,
+				h.InFlightHTLC.IncomingChannel,
+				h.Resolution.OutgoingChannel)
+		}
+
+		effectiveFees := r.effectiveFees(
+			h.Resolution.TimestampSettled, &h.InFlightHTLC,
+			h.Resolution.Success,
+		)
+		reputationTracker.revenue.addAtTime(
+			effectiveFees, h.Resolution.TimestampSettled,
+		)
+
+	}
+
+	return reputationTracker, nil
 }
 
 // sufficientReputation returns a reputation check that is used to determine
 // whether the forwarding peer has sufficient reputation to forward the
 // proposed htlc over the outgoing channel that they have requested.
 func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
-	outgoingChannelRevenue float64) *ReputationCheck {
+	outgoingChannelRevenue float64) (*ReputationCheck, error) {
 
-	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
+	incomingChannel, err := r.getChannelReputation(htlc.IncomingChannel)
+	if err != nil {
+		return nil, err
+	}
+
 	incomingRevenue := incomingChannel.revenue.getValue()
 
 	// Get the in flight risk for the incoming channel.
@@ -157,7 +268,7 @@ func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
 		OutgoingRevenue: outgoingChannelRevenue,
 		InFlightRisk:    inFlightRisk,
 		HTLCRisk:        outstandingRisk(htlc, r.resolutionPeriod),
-	}
+	}, nil
 }
 
 type htlcIdxTimestamp struct {
@@ -193,9 +304,12 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	}
 
 	// First, check whether the HTLC qualifies for protected resources.
-	reputation := r.sufficientReputation(
+	reputation, err := r.sufficientReputation(
 		htlc, outgoingChannel.revenue.getValue(),
 	)
+	if err != nil {
+		return nil, err
+	}
 	sufficientRep := reputation.SufficientReputation()
 
 	// The HTLC has access to protected spots if it has sufficient
@@ -220,7 +334,11 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	// resource bucketing so we go ahead and add it to the in-flight
 	// HTLCs on the incoming channel, returning true indicating that
 	// we're happy for the HTLC to proceed.
-	r.getChannelReputation(htlc.IncomingChannel).addInFlight(
+	incomingCHannel, err := r.getChannelReputation(htlc.IncomingChannel)
+	if err != nil {
+		return nil, err
+	}
+	incomingCHannel.addInFlight(
 		htlc, NewEndorsementSignal(htlcProtected),
 	)
 
@@ -238,14 +356,21 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 }
 
 // ResolveHTLC updates the reputation manager's state to reflect the
-// resolution
+// resolution. If the incoming channel or the in flight HTLC are not found
+// this operation is a no-op.
+// TODO: figure out whether we should allow this API to be called and then the
+// corresponding forward is not found (depends on replay logic).
 func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	r.Lock()
 	defer r.Unlock()
 
 	// Fetch the in flight HTLC from the incoming channel and add its
 	// effective fees to the incoming channel's reputation.
-	incomingChannel := r.getChannelReputation(htlc.IncomingChannel)
+	incomingChannel := r.channelReputation[htlc.IncomingChannel]
+	if incomingChannel == nil {
+		return nil
+	}
+
 	inFlight, ok := incomingChannel.inFlightHTLCs[htlc.IncomingIndex]
 	if !ok {
 		return nil
@@ -259,7 +384,7 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 
 	// Add the fees for the forward to the outgoing channel _if_ the
 	// HTLC was successful.
-	outgoingChannel := r.lookupTargetChannel(htlc.OutgoingChannel)
+	outgoingChannel := r.targetChannels[htlc.OutgoingChannel]
 	if outgoingChannel == nil {
 		// We expect a channel to be found if we've already forwarded
 		// it.
