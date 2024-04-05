@@ -62,6 +62,8 @@ type ResourceManager struct {
 
 	clock clock.Clock
 
+	log Logger
+
 	// A single mutex guarding access to the manager.
 	sync.Mutex
 }
@@ -81,7 +83,7 @@ type ChannelHistory func(id lnwire.ShortChannelID,
 func NewReputationManager(revenueWindow time.Duration,
 	reputationMultiplier int, resolutionPeriod time.Duration,
 	clock clock.Clock, channelHistory ChannelHistory,
-	protectedPercentage uint64) (*ResourceManager, error) {
+	protectedPercentage uint64, log Logger) (*ResourceManager, error) {
 
 	if protectedPercentage > 100 {
 		return nil, fmt.Errorf("Percentage: %v > 100",
@@ -103,6 +105,7 @@ func NewReputationManager(revenueWindow time.Duration,
 		resolutionPeriod: resolutionPeriod,
 		channelHistory:   channelHistory,
 		clock:            clock,
+		log:              log,
 	}, nil
 }
 
@@ -142,6 +145,11 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 	if err != nil {
 		return nil, err
 	}
+
+	r.log.Infof("Adding new target channel: %v with: %v historical "+
+		"records (in flight count: %v, capacity: %v)",
+		id, len(history), chanInfo.InFlightHTLC,
+		chanInfo.InFlightLiquidity)
 
 	// Add the bi-directional revenue for our forwards to the fresh tracker.
 	// We sort by resolved timestamp so that we can reply values for our
@@ -220,6 +228,9 @@ func (r *ResourceManager) newChannelReputation(
 			history[j].Resolution.TimestampSettled,
 		)
 	})
+
+	r.log.Infof("Adding new reputation tracker: %v with: %v historical "+
+		"records", channel, len(history))
 
 	for _, h := range history {
 		if !(h.InFlightHTLC.IncomingChannel == channel ||
