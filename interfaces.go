@@ -259,3 +259,9 @@ type ChannelInfo struct {
 	// flight.
 	InFlightLiquidity lnwire.MilliSatoshi
 }
+
+// Very basic logger interface so that calling code can provide us with logging
+type Logger interface {
+	Infof(template string, args ...interface{})
+	Debugf(template string, args ...interface{})
+}
