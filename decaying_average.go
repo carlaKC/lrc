@@ -1,6 +1,7 @@
 package lrc
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -36,10 +37,9 @@ func newDecayingAverage(clock clock.Clock,
 // update modifies the decaying average's value to reflect its value at the
 // current time. This function *must* be used when reading and writing the
 // average's value.
-func (d *decayingAverage) update() {
+func (d *decayingAverage) update(updateTime time.Time) {
 	var (
-		now            = d.clock.Now()
-		lastUpdateDiff = now.Sub(d.lastUpdate).Seconds()
+		lastUpdateDiff = updateTime.Sub(d.lastUpdate).Seconds()
 	)
 
 	// If no time has passed, we don't need to apply an update.
@@ -53,14 +53,30 @@ func (d *decayingAverage) update() {
 // getValue updates the decaying average to the present and returns its
 // current value.
 func (d *decayingAverage) getValue() float64 {
-	d.update()
-
+	d.update(d.clock.Now())
 	return d.value
 }
 
 // add updates the decaying average to the present and adds the value provided.
 func (d *decayingAverage) add(value float64) {
-	d.update()
+	d.addAtTime(value, d.clock.Now())
+}
+
+// addAtTime adds a value to the decaying average at a specific timestamp. This
+// should be called with the current time to apply current updates, and may
+// be called with times in the past to bootstrap previous values. If
+// bootstrapping, values must be provided in chronological order (we can't
+// add a value at a timestamp that is before our last update).
+func (d *decayingAverage) addAtTime(value float64, ts time.Time) error {
+	if !d.lastUpdate.IsZero() && ts.Before(d.lastUpdate) {
+		return fmt.Errorf("updated decaying average at: %v with "+
+			"value: %v after last update time of: %v",
+			ts, value, d.lastUpdate)
+	}
+
+	d.update(ts)
 	d.value += value
-	d.lastUpdate = d.clock.Now()
+	d.lastUpdate = ts
+
+	return nil
 }

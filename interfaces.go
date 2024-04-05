@@ -10,13 +10,6 @@ import (
 // LocalResourceManager is an interface representing an entity that tracks
 // the reputation of channel peers based on HTLC forwarding behavior.
 type LocalResourceManager interface {
-	// AddHistoricalHTLCs bootstraps the resource manager with historically
-	// forwarded htlcs to build up state on start. It must be provided with
-	// a map of all the channels that were used as outgoing forwarding
-	// channels over the period that the htlcs were processed.
-	AddHistoricalHTLCs(htlcs []*ForwardedHTLC,
-		channels map[lnwire.ShortChannelID]ChannelInfo) error
-
 	// ForwardHTLC updates the reputation manager to reflect that a
 	// proposed HTLC has been forwarded. It requires the forwarding
 	// restrictions of the outgoing channel to implement bucketing
