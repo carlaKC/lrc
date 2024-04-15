@@ -379,11 +379,17 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	// effective fees to the incoming channel's reputation.
 	incomingChannel := r.channelReputation[htlc.IncomingChannel]
 	if incomingChannel == nil {
+		r.log.Infof("Incoming channel: %v not found for resolve",
+			htlc.IncomingChannel.ToUint64())
+
 		return nil
 	}
 
 	inFlight, ok := incomingChannel.inFlightHTLCs[htlc.IncomingIndex]
 	if !ok {
+		r.log.Infof("In flight HTLC: %v/%v not found for resolve",
+			htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex)
+
 		return nil
 	}
 
@@ -397,10 +403,10 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	// HTLC was successful.
 	outgoingChannel := r.targetChannels[htlc.OutgoingChannel]
 	if outgoingChannel == nil {
-		// We expect a channel to be found if we've already forwarded
-		// it.
-		panic(fmt.Sprintf("Outgoing channel: %v not found on resolve",
-			htlc.OutgoingChannel))
+		r.log.Infof("Outgoing channel: %v not found for removal",
+			htlc.OutgoingChannel.ToUint64())
+
+		return nil
 	}
 
 	if htlc.Success {
