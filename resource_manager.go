@@ -146,9 +146,9 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 		return nil, err
 	}
 
-	r.log.Infof("Adding new target channel: %v with: %v historical "+
+	r.log.Infof("Adding new target channel: %v(%v) with: %v historical "+
 		"records (in flight count: %v, capacity: %v)",
-		id, len(history), chanInfo.InFlightHTLC,
+		id.ToUint64(), id, len(history), chanInfo.InFlightHTLC,
 		chanInfo.InFlightLiquidity)
 
 	// Add the bi-directional revenue for our forwards to the fresh tracker.
@@ -229,8 +229,8 @@ func (r *ResourceManager) newChannelReputation(
 		)
 	})
 
-	r.log.Infof("Adding new reputation tracker: %v with: %v historical "+
-		"records", channel, len(history))
+	r.log.Infof("Adding new reputation tracker: %v (%v) with: %v "+
+		"historical records", channel.ToUint64(), channel, len(history))
 
 	for _, h := range history {
 		if !(h.InFlightHTLC.IncomingChannel == channel ||
@@ -379,11 +379,17 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	// effective fees to the incoming channel's reputation.
 	incomingChannel := r.channelReputation[htlc.IncomingChannel]
 	if incomingChannel == nil {
+		r.log.Infof("Incoming channel: %v not found for resolve",
+			htlc.IncomingChannel.ToUint64())
+
 		return nil
 	}
 
 	inFlight, ok := incomingChannel.inFlightHTLCs[htlc.IncomingIndex]
 	if !ok {
+		r.log.Infof("In flight HTLC: %v/%v not found for resolve",
+			htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex)
+
 		return nil
 	}
 
@@ -397,10 +403,10 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	// HTLC was successful.
 	outgoingChannel := r.targetChannels[htlc.OutgoingChannel]
 	if outgoingChannel == nil {
-		// We expect a channel to be found if we've already forwarded
-		// it.
-		panic(fmt.Sprintf("Outgoing channel: %v not found on resolve",
-			htlc.OutgoingChannel))
+		r.log.Infof("Outgoing channel: %v not found for removal",
+			htlc.OutgoingChannel.ToUint64())
+
+		return nil
 	}
 
 	if htlc.Success {
