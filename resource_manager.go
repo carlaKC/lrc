@@ -146,9 +146,9 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 		return nil, err
 	}
 
-	r.log.Infof("Adding new target channel: %v with: %v historical "+
+	r.log.Infof("Adding new target channel: %v(%v) with: %v historical "+
 		"records (in flight count: %v, capacity: %v)",
-		id, len(history), chanInfo.InFlightHTLC,
+		id.ToUint64(), id, len(history), chanInfo.InFlightHTLC,
 		chanInfo.InFlightLiquidity)
 
 	// Add the bi-directional revenue for our forwards to the fresh tracker.
@@ -229,8 +229,8 @@ func (r *ResourceManager) newChannelReputation(
 		)
 	})
 
-	r.log.Infof("Adding new reputation tracker: %v with: %v historical "+
-		"records", channel, len(history))
+	r.log.Infof("Adding new reputation tracker: %v (%v) with: %v "+
+		"historical records", channel.ToUint64(), channel, len(history))
 
 	for _, h := range history {
 		if !(h.InFlightHTLC.IncomingChannel == channel ||
