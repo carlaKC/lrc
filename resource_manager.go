@@ -254,13 +254,11 @@ func (r *ResourceManager) newChannelReputation(
 			h.Resolution.TimestampSettled, &h.InFlightHTLC,
 			h.Resolution.Success,
 		)
-		reputationTracker.revenue.addAtTime(
-                if err:=reputationTracker.revenue.addAtTime(
+		if err := reputationTracker.revenue.addAtTime(
 			effectiveFees, h.Resolution.TimestampSettled,
-		); err!=nil{
-                        return nil, err
-                }
-
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	return reputationTracker, nil
