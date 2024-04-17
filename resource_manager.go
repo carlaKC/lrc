@@ -64,6 +64,10 @@ type ResourceManager struct {
 
 	log Logger
 
+	// Expected time for blocks, included to allow simulation with faster
+	// block time.
+	blockTime float64
+
 	// A single mutex guarding access to the manager.
 	sync.Mutex
 }
@@ -83,7 +87,8 @@ type ChannelHistory func(id lnwire.ShortChannelID,
 func NewReputationManager(revenueWindow time.Duration,
 	reputationMultiplier int, resolutionPeriod time.Duration,
 	clock clock.Clock, channelHistory ChannelHistory,
-	protectedPercentage uint64, log Logger) (*ResourceManager, error) {
+	protectedPercentage uint64, log Logger, blockTime float64) (
+	*ResourceManager, error) {
 
 	if protectedPercentage > 100 {
 		return nil, fmt.Errorf("Percentage: %v > 100",
@@ -105,6 +110,7 @@ func NewReputationManager(revenueWindow time.Duration,
 		resolutionPeriod: resolutionPeriod,
 		channelHistory:   channelHistory,
 		clock:            clock,
+		blockTime:        blockTime,
 		log:              log,
 	}, nil
 }
@@ -210,6 +216,7 @@ func (r *ResourceManager) newChannelReputation(
 			r.clock, r.reputationWindow,
 		),
 		inFlightHTLCs: make(map[int]*InFlightHTLC),
+		blockTime:     r.blockTime,
 	}
 
 	// When adding a reputation tracker, we only want to account for the
@@ -247,10 +254,11 @@ func (r *ResourceManager) newChannelReputation(
 			h.Resolution.TimestampSettled, &h.InFlightHTLC,
 			h.Resolution.Success,
 		)
-		reputationTracker.revenue.addAtTime(
+		if err := reputationTracker.revenue.addAtTime(
 			effectiveFees, h.Resolution.TimestampSettled,
-		)
-
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	return reputationTracker, nil
@@ -278,7 +286,9 @@ func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
 		IncomingRevenue: incomingRevenue,
 		OutgoingRevenue: outgoingChannelRevenue,
 		InFlightRisk:    inFlightRisk,
-		HTLCRisk:        outstandingRisk(htlc, r.resolutionPeriod),
+		HTLCRisk: outstandingRisk(
+			r.blockTime, htlc, r.resolutionPeriod,
+		),
 	}, nil
 }
 
@@ -483,6 +493,10 @@ type reputationTracker struct {
 
 	// inFlightHTLCs provides a map of in-flight HTLCs, keyed by htlc id.
 	inFlightHTLCs map[int]*InFlightHTLC
+
+	// blockTime is the expected time to find a block, surfaced to account
+	// for simulation scenarios where this isn't 10 minutes.
+	blockTime float64
 }
 
 // addInFlight updates the outgoing channel's view to include a new in flight
@@ -513,7 +527,7 @@ func (r *reputationTracker) inFlightHTLCRisk(
 	var inFlightRisk float64
 	for _, htlc := range r.inFlightHTLCs {
 		inFlightRisk += outstandingRisk(
-			htlc.ProposedHTLC, resolutionPeriod,
+			r.blockTime, htlc.ProposedHTLC, resolutionPeriod,
 		)
 	}
 
@@ -521,10 +535,10 @@ func (r *reputationTracker) inFlightHTLCRisk(
 }
 
 // outstandingRisk calculates the outstanding risk of in-flight HTLCs.
-func outstandingRisk(htlc *ProposedHTLC,
+func outstandingRisk(blockTime float64, htlc *ProposedHTLC,
 	resolutionPeriod time.Duration) float64 {
 
 	return (float64(htlc.ForwardingFee()) *
-		float64(htlc.CltvExpiryDelta) * 10 * 60) /
+		float64(htlc.CltvExpiryDelta) * blockTime * 60) /
 		resolutionPeriod.Seconds()
 }
