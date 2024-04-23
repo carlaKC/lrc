@@ -48,7 +48,7 @@ func (d *decayingAverage) update(updateTime time.Time) {
 	}
 
 	d.value = d.value * math.Pow(d.decayRate, lastUpdateDiff)
-        d.lastUpdate = updateTime
+	d.lastUpdate = updateTime
 }
 
 // getValue updates the decaying average to the present and returns its
