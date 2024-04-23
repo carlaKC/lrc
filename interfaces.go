@@ -1,10 +1,17 @@
 package lrc
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/lightningnetwork/lnd/lnwire"
+)
+
+var (
+	// ErrAmtOverflow indicates that a HTLC's amount is more than the
+	// maximum theoretical number of millisatoshis.
+	ErrAmtOverflow = errors.New("htlc amount overflows max msat")
 )
 
 // LocalResourceManager is an interface representing an entity that tracks
