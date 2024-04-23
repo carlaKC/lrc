@@ -408,6 +408,8 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 		htlc.TimestampSettled, inFlight, htlc.Success,
 	)
 	incomingChannel.revenue.add(effectiveFees)
+	r.log.Infof("Adding effective fees to channel: %v: %v",
+		htlc.IncomingChannel.ToUint64(), effectiveFees)
 
 	// Add the fees for the forward to the outgoing channel _if_ the
 	// HTLC was successful.
@@ -420,6 +422,10 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	}
 
 	if htlc.Success {
+		r.log.Infof("HTLC successful: adding fees to channel: %v: %v",
+			htlc.OutgoingChannel.ToUint64(),
+			inFlight.ForwardingFee())
+
 		outgoingChannel.revenue.add(float64(inFlight.ForwardingFee()))
 	}
 
