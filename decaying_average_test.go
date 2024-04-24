@@ -16,12 +16,19 @@ func setupTest(period time.Duration) (*clock.TestClock, *decayingAverage) {
 	return testClock, newDecayingAverage(testClock, period)
 }
 
+// TestDecayingAverage tests basic operation of our decaying average
+// calculations.
 func TestDecayingAverage(t *testing.T) {
 	period := time.Hour * 10
 	testClock, decayingAverage := setupTest(period)
 
-	// Assert that we begin with a zero value.
+	// Assert that we begin with a zero value and timestamp.
+	require.EqualValues(t, time.Time{}, decayingAverage.lastUpdate)
+	require.EqualValues(t, 0, decayingAverage.value)
+
+	// Once we access our value, assert that timestamp is updated.
 	require.EqualValues(t, 0, decayingAverage.getValue())
+	require.EqualValues(t, testTime, decayingAverage.lastUpdate)
 
 	// Add a value to the decaying average and assert that the average
 	// has the same value, because our mock clock's time is the same as
