@@ -1,9 +1,22 @@
 package lrc
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/lightningnetwork/lnd/lnwire"
+)
+
+var (
+	// ErrProtocolLimit is returned when we exceed the protocol defined
+	// limit of htlc slots.
+	ErrProtocolLimit = errors.New("slot count exceeds protocol limit of " +
+		"483")
+
+	// ErrProtectedPercentage is returned when a protected percentage
+	// is invalid.
+	ErrProtectedPercentage = errors.New("protected percentage must be " +
+		"<= 100")
 )
 
 // Compile time check that ReputationManager implements the
@@ -22,7 +35,18 @@ type bucketResourceManager struct {
 // newBucketResourceManager creates a resource manager that reserves a
 // percentage of resources for HTLCs that are protected.
 func newBucketResourceManager(totalLiquidity lnwire.MilliSatoshi,
-	totalSlots, protectedPercentage uint64) *bucketResourceManager {
+	totalSlots, protectedPercentage uint64) (*bucketResourceManager,
+	error) {
+
+	if totalSlots > 483 {
+		return nil, fmt.Errorf("%w: with %v slots", ErrProtocolLimit,
+			totalSlots)
+	}
+
+	if protectedPercentage > 100 {
+		return nil, fmt.Errorf("%w: with %v percentage",
+			ErrProtectedPercentage, protectedPercentage)
+	}
 
 	protectedLiquidity := (uint64(totalLiquidity) * protectedPercentage) / 100
 	protectedSlots := (totalSlots * protectedPercentage) / 100
@@ -32,7 +56,7 @@ func newBucketResourceManager(totalLiquidity lnwire.MilliSatoshi,
 			protectedLiquidity,
 		),
 		generalSlots: totalSlots - protectedSlots,
-	}
+	}, nil
 }
 
 // addHTLC adds a HTLC to the resource manager's internal state, returning a

@@ -140,10 +140,13 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 	chanInfo *ChannelInfo) (*targetChannelTracker, error) {
 
-	targetChannel := newTargetChannelTracker(
+	targetChannel, err := newTargetChannelTracker(
 		r.clock, r.revenueWindow, chanInfo,
 		r.protectedPercentage,
 	)
+        if err!=nil{
+                return nil, err
+        }
 
 	// When adding a target channel, we want to account for all of its
 	// forwards so we pull full history for the channel.
@@ -481,15 +484,21 @@ type targetChannelTracker struct {
 }
 
 func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
-	channel *ChannelInfo, protectedPortion uint64) *targetChannelTracker {
+	channel *ChannelInfo, protectedPortion uint64) (*targetChannelTracker,
+	error) {
+
+	bucket, err := newBucketResourceManager(
+		channel.InFlightLiquidity, channel.InFlightHTLC,
+		protectedPortion,
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	return &targetChannelTracker{
-		revenue: newDecayingAverage(clock, revenueWindow),
-		resourceBuckets: newBucketResourceManager(
-			channel.InFlightLiquidity, channel.InFlightHTLC,
-			protectedPortion,
-		),
-	}
+		revenue:         newDecayingAverage(clock, revenueWindow),
+		resourceBuckets: bucket,
+	}, nil
 }
 
 type reputationTracker struct {
