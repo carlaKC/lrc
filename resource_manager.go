@@ -1,8 +1,8 @@
 package lrc
 
 import (
+	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"sync"
 	"time"
@@ -15,6 +15,12 @@ import (
 // MaxMilliSatoshi is the maximum amount of millisatoshi that can possibly
 // exist given 21 million bitcoin cap.
 const MaxMilliSatoshi = 21_000_000 * 10_000_0000 * 1000
+
+var (
+	// ErrChannelNotFound is returned when we don't have a channel
+	// tracked in our internal state.
+	ErrChannelNotFound = errors.New("channel not found")
+)
 
 // Compile time check that ReputationManager implements the
 // LocalReputationManager interface.
@@ -225,6 +231,7 @@ func (r *ResourceManager) newChannelReputation(
 		inFlightHTLCs:    make(map[int]*InFlightHTLC),
 		blockTime:        r.blockTime,
 		resolutionPeriod: r.resolutionPeriod,
+		log:              r.log,
 	}
 
 	// When adding a reputation tracker, we only want to account for the
@@ -258,9 +265,9 @@ func (r *ResourceManager) newChannelReputation(
 				h.Resolution.OutgoingChannel)
 		}
 
-		effectiveFees := r.effectiveFees(
-			h.Resolution.TimestampSettled, &h.InFlightHTLC,
-			h.Resolution.Success,
+		effectiveFees := effectiveFees(
+			r.resolutionPeriod, h.Resolution.TimestampSettled,
+			&h.InFlightHTLC, h.Resolution.Success,
 		)
 		if err := reputationTracker.revenue.addAtTime(
 			effectiveFees, h.Resolution.TimestampSettled,
@@ -387,7 +394,9 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 // this operation is a no-op.
 // TODO: figure out whether we should allow this API to be called and then the
 // corresponding forward is not found (depends on replay logic).
-func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
+func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
+	error) {
+
 	r.Lock()
 	defer r.Unlock()
 
@@ -395,36 +404,24 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 	// effective fees to the incoming channel's reputation.
 	incomingChannel := r.channelReputation[htlc.IncomingChannel]
 	if incomingChannel == nil {
-		r.log.Infof("Incoming channel: %v not found for resolve",
-			htlc.IncomingChannel.ToUint64())
-
-		return nil
+		return nil, fmt.Errorf("%w: incoming %v",
+			ErrChannelNotFound, htlc.IncomingChannel.ToUint64())
 	}
 
-	inFlight, ok := incomingChannel.inFlightHTLCs[htlc.IncomingIndex]
-	if !ok {
-		r.log.Infof("In flight HTLC: %v/%v not found for resolve",
-			htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex)
-
-		return nil
+	// Resolve the HTLC on the incoming channel. If it's not found, it's
+	// possible that we only started tracking after the HTLC was forwarded
+	// so we log the event and return without error.
+	inFlight, err := incomingChannel.ResolveInFlight(htlc)
+	if err != nil {
+		return nil, err
 	}
-
-	delete(incomingChannel.inFlightHTLCs, inFlight.IncomingIndex)
-	effectiveFees := r.effectiveFees(
-		htlc.TimestampSettled, inFlight, htlc.Success,
-	)
-	incomingChannel.revenue.add(effectiveFees)
-	r.log.Infof("Adding effective fees to channel: %v: %v",
-		htlc.IncomingChannel.ToUint64(), effectiveFees)
 
 	// Add the fees for the forward to the outgoing channel _if_ the
 	// HTLC was successful.
 	outgoingChannel := r.targetChannels[htlc.OutgoingChannel]
 	if outgoingChannel == nil {
-		r.log.Infof("Outgoing channel: %v not found for removal",
-			htlc.OutgoingChannel.ToUint64())
-
-		return nil
+		return nil, fmt.Errorf("%w: outgoing: %v",
+			ErrChannelNotFound, htlc.OutgoingChannel.ToUint64())
 	}
 
 	if htlc.Success {
@@ -441,41 +438,7 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC {
 		inFlight.OutgoingAmount,
 	)
 
-	return inFlight
-}
-
-func (r *ResourceManager) effectiveFees(timestampSettled time.Time,
-	htlc *InFlightHTLC, success bool) float64 {
-
-	resolutionTime := timestampSettled.Sub(htlc.TimestampAdded).Seconds()
-	resolutionSeconds := r.resolutionPeriod.Seconds()
-	fee := float64(htlc.ForwardingFee())
-
-	opportunityCost := math.Ceil(
-		(resolutionTime-resolutionSeconds)/resolutionSeconds,
-	) * fee
-
-	switch {
-	// Successful, endorsed HTLC.
-	case htlc.IncomingEndorsed == EndorsementTrue && success:
-		return fee - opportunityCost
-
-		// Failed, endorsed HTLC.
-	case htlc.IncomingEndorsed == EndorsementTrue:
-		return -1 * opportunityCost
-
-	// Successful, unendorsed HTLC.
-	case success:
-		if resolutionTime <= r.resolutionPeriod.Seconds() {
-			return fee
-		}
-
-		return 0
-
-	// Failed, unendorsed HTLC.
-	default:
-		return 0
-	}
+	return inFlight, nil
 }
 
 // targetChannelTracker is used to track the revenue and resources of channels

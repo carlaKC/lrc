@@ -1,7 +1,16 @@
 package lrc
 
 import (
+	"errors"
+	"fmt"
+	"math"
 	"time"
+)
+
+var (
+	// ErrResolutionNotFound is returned when we get a resolution for a
+	// HTLC that is not found in our in flight set.
+	ErrResolutionNotFound = errors.New("resolved htlc not found")
 )
 
 type reputationTracker struct {
@@ -19,6 +28,8 @@ type reputationTracker struct {
 	// resolutionPeriod is the amount of time that we reasonably expect
 	// a htlc to resolve in.
 	resolutionPeriod time.Duration
+
+	log Logger
 }
 
 func (r *reputationTracker) IncomingReputation() IncomingReputation {
@@ -47,6 +58,34 @@ func (r *reputationTracker) AddInFlight(htlc *ProposedHTLC,
 	r.inFlightHTLCs[htlc.IncomingIndex] = inFlightHTLC
 }
 
+// ResolveInFlight removes a htlc from the reputation tracker's state,
+// returning an error if it is not found, and updates the link's reputation
+// accordingly. It will also return the original in flight htlc when
+// successfully removed.
+func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
+	error) {
+
+	inFlight, ok := r.inFlightHTLCs[htlc.IncomingIndex]
+	if !ok {
+		return nil, fmt.Errorf("%w: %v/%v", ErrResolutionNotFound,
+			htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex)
+	}
+
+	delete(r.inFlightHTLCs, inFlight.IncomingIndex)
+
+	effectiveFees := effectiveFees(
+		r.resolutionPeriod, htlc.TimestampSettled, inFlight,
+		htlc.Success,
+	)
+
+	r.log.Infof("Adding effective fees to channel: %v: %v",
+		htlc.IncomingChannel.ToUint64(), effectiveFees)
+
+	r.revenue.add(effectiveFees)
+
+	return inFlight, nil
+}
+
 // inFlightHTLCRisk returns the total outstanding risk of the incoming
 // in-flight HTLCs from a specific channel.
 func (r *reputationTracker) inFlightHTLCRisk() float64 {
@@ -58,6 +97,40 @@ func (r *reputationTracker) inFlightHTLCRisk() float64 {
 	}
 
 	return inFlightRisk
+}
+
+func effectiveFees(resolutionPeriod time.Duration, timestampSettled time.Time,
+	htlc *InFlightHTLC, success bool) float64 {
+
+	resolutionTime := timestampSettled.Sub(htlc.TimestampAdded).Seconds()
+	resolutionSeconds := resolutionPeriod.Seconds()
+	fee := float64(htlc.ForwardingFee())
+
+	opportunityCost := math.Ceil(
+		(resolutionTime-resolutionSeconds)/resolutionSeconds,
+	) * fee
+
+	switch {
+	// Successful, endorsed HTLC.
+	case htlc.IncomingEndorsed == EndorsementTrue && success:
+		return fee - opportunityCost
+
+	// Failed, endorsed HTLC.
+	case htlc.IncomingEndorsed == EndorsementTrue:
+		return -1 * opportunityCost
+
+	// Successful, unendorsed HTLC.
+	case success:
+		if resolutionTime <= resolutionPeriod.Seconds() {
+			return fee
+		}
+
+		return 0
+
+	// Failed, unendorsed HTLC.
+	default:
+		return 0
+	}
 }
 
 // outstandingRisk calculates the outstanding risk of in-flight HTLCs.

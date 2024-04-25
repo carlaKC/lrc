@@ -28,7 +28,7 @@ type LocalResourceManager interface {
 	// in-flight htlc has been resolved. It returs the in flight HTLC as
 	// tracked by the manager. If the HTLC is not known, it may return
 	// nil.
-	ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC
+	ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC, error)
 }
 
 // ForwardDecision contains the action that should be taken for forwarding
