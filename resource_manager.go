@@ -12,6 +12,10 @@ import (
 	"github.com/lightningnetwork/lnd/queue"
 )
 
+// MaxMilliSatoshi is the maximum amount of millisatoshi that can possibly
+// exist given 21 million bitcoin cap.
+const MaxMilliSatoshi = 21_000_000 * 10_000_0000 * 1000
+
 // Compile time check that ReputationManager implements the
 // LocalReputationManager interface.
 var _ LocalResourceManager = (*ResourceManager)(nil)
@@ -316,6 +320,12 @@ func (r *htlcIdxTimestamp) Less(other queue.PriorityQueueItem) bool {
 // not expect any further resolution notification.
 func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	chanOutInfo *ChannelInfo) (*ForwardDecision, error) {
+
+	// Validate the HTLC amount. When LND intercepts, it hasn't yet
+	// checked anything about the HTLC so this value could be manipulated.
+	if htlc.OutgoingAmount > MaxMilliSatoshi {
+		return nil, ErrAmtOverflow
+	}
 
 	r.Lock()
 	defer r.Unlock()
