@@ -361,11 +361,11 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	// resource bucketing so we go ahead and add it to the in-flight
 	// HTLCs on the incoming channel, returning true indicating that
 	// we're happy for the HTLC to proceed.
-	incomingCHannel, err := r.getChannelReputation(htlc.IncomingChannel)
+	incomingChannel, err := r.getChannelReputation(htlc.IncomingChannel)
 	if err != nil {
 		return nil, err
 	}
-	incomingCHannel.addInFlight(
+	incomingChannel.AddInFlight(
 		htlc, NewEndorsementSignal(htlcProtected),
 	)
 
