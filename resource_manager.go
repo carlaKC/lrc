@@ -238,8 +238,9 @@ func (r *ResourceManager) newChannelReputation(
 		revenue: newDecayingAverage(
 			r.clock, r.reputationWindow,
 		),
-		inFlightHTLCs: make(map[int]*InFlightHTLC),
-		blockTime:     r.blockTime,
+		inFlightHTLCs:    make(map[int]*InFlightHTLC),
+		blockTime:        r.blockTime,
+		resolutionPeriod: r.resolutionPeriod,
 	}
 
 	// When adding a reputation tracker, we only want to account for the
@@ -298,17 +299,9 @@ func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
 		return nil, err
 	}
 
-	incomingRevenue := incomingChannel.revenue.getValue()
-
-	// Get the in flight risk for the incoming channel.
-	inFlightRisk := incomingChannel.inFlightHTLCRisk(
-		htlc.IncomingChannel, r.resolutionPeriod,
-	)
-
 	return &ReputationCheck{
-		IncomingRevenue: incomingRevenue,
-		OutgoingRevenue: outgoingChannelRevenue,
-		InFlightRisk:    inFlightRisk,
+		IncomingReputation: incomingChannel.IncomingReputation(),
+		OutgoingRevenue:    outgoingChannelRevenue,
 		HTLCRisk: outstandingRisk(
 			r.blockTime, htlc, r.resolutionPeriod,
 		),
@@ -525,61 +518,4 @@ func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
 		revenue:         newDecayingAverage(clock, revenueWindow),
 		resourceBuckets: bucket,
 	}, nil
-}
-
-type reputationTracker struct {
-	// revenue tracks the bi-directional revenue that this channel has
-	// earned the local node as the incoming edge for HTLC forwards.
-	revenue *decayingAverage
-
-	// inFlightHTLCs provides a map of in-flight HTLCs, keyed by htlc id.
-	inFlightHTLCs map[int]*InFlightHTLC
-
-	// blockTime is the expected time to find a block, surfaced to account
-	// for simulation scenarios where this isn't 10 minutes.
-	blockTime float64
-}
-
-// addInFlight updates the outgoing channel's view to include a new in flight
-// HTLC.
-func (r *reputationTracker) addInFlight(htlc *ProposedHTLC,
-	outgoingEndorsed Endorsement) {
-
-	inFlightHTLC := &InFlightHTLC{
-		TimestampAdded:   r.revenue.clock.Now(),
-		ProposedHTLC:     htlc,
-		OutgoingEndorsed: outgoingEndorsed,
-	}
-
-	// Sanity check whether the HTLC is already present.
-	if _, ok := r.inFlightHTLCs[htlc.IncomingIndex]; ok {
-		return
-	}
-
-	r.inFlightHTLCs[htlc.IncomingIndex] = inFlightHTLC
-}
-
-// inFlightHTLCRisk returns the total outstanding risk of the incoming
-// in-flight HTLCs from a specific channel.
-func (r *reputationTracker) inFlightHTLCRisk(
-	incomingChannel lnwire.ShortChannelID,
-	resolutionPeriod time.Duration) float64 {
-
-	var inFlightRisk float64
-	for _, htlc := range r.inFlightHTLCs {
-		inFlightRisk += outstandingRisk(
-			r.blockTime, htlc.ProposedHTLC, resolutionPeriod,
-		)
-	}
-
-	return inFlightRisk
-}
-
-// outstandingRisk calculates the outstanding risk of in-flight HTLCs.
-func outstandingRisk(blockTime float64, htlc *ProposedHTLC,
-	resolutionPeriod time.Duration) float64 {
-
-	return (float64(htlc.ForwardingFee()) *
-		float64(htlc.CltvExpiryDelta) * blockTime * 60) /
-		resolutionPeriod.Seconds()
 }
