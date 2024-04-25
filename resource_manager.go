@@ -64,6 +64,8 @@ type ResourceManager struct {
 	// forwards for a channel when we encounter it.
 	channelHistory ChannelHistory
 
+	newBucket ResourceBucketConstructor
+
 	clock clock.Clock
 
 	log Logger
@@ -84,6 +86,12 @@ type ChannelFetcher func(lnwire.ShortChannelID) (*ChannelInfo, error)
 // the channel was either the incoming or the outgoing link.
 type ChannelHistory func(id lnwire.ShortChannelID,
 	incomingOnly bool) ([]*ForwardedHTLC, error)
+
+// ResourceBucketConstructor creates resource buckets, pulled out into an
+// interface for testing purposes.
+type ResourceBucketConstructor func(totalLiquidity lnwire.MilliSatoshi,
+	totalSlots, protectedPercentage uint64) (resourceBucketer,
+	error)
 
 // NewReputationManager creates a local reputation manager that will track
 // channel revenue over the window provided, and incoming channel reputation
@@ -113,9 +121,17 @@ func NewReputationManager(revenueWindow time.Duration,
 		),
 		resolutionPeriod: resolutionPeriod,
 		channelHistory:   channelHistory,
-		clock:            clock,
-		blockTime:        blockTime,
-		log:              log,
+		newBucket: func(totalLiquidity lnwire.MilliSatoshi, totalSlots,
+			protectedPercentage uint64) (resourceBucketer, error) {
+
+			return newBucketResourceManager(
+				totalLiquidity, totalSlots,
+				protectedPercentage,
+			)
+		},
+		clock:     clock,
+		blockTime: blockTime,
+		log:       log,
 	}, nil
 }
 
@@ -146,7 +162,7 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 
 	targetChannel, err := newTargetChannelTracker(
 		r.clock, r.revenueWindow, chanInfo,
-		r.protectedPercentage,
+		r.protectedPercentage, r.newBucket,
 	)
 	if err != nil {
 		return nil, err
@@ -494,10 +510,10 @@ type targetChannelTracker struct {
 }
 
 func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
-	channel *ChannelInfo, protectedPortion uint64) (*targetChannelTracker,
-	error) {
+	channel *ChannelInfo, protectedPortion uint64,
+	newBucket ResourceBucketConstructor) (*targetChannelTracker, error) {
 
-	bucket, err := newBucketResourceManager(
+	bucket, err := newBucket(
 		channel.InFlightLiquidity, channel.InFlightHTLC,
 		protectedPortion,
 	)
