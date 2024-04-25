@@ -39,7 +39,7 @@ func setup(t *testing.T, chanHist ChannelHistory,
 
 	}
 
-	r, err := NewReputationManager(
+	r, err := NewResourceManager(
 		time.Hour, 10, time.Second*90, testClock, chanHist, 50,
 		&TestLogger{}, 10,
 	)
@@ -80,7 +80,7 @@ func TestResourceManager(t *testing.T) {
 	_, err := mgr.ForwardHTLC(htlc0, chanOutInfo)
 	require.ErrorIs(t, err, ErrAmtOverflow)
 
-        // Add a HTLC that's endorsed, but doesn't yet have reputation.
+	// Add a HTLC that's endorsed, but doesn't yet have reputation.
 	htlc1 := mockProposedHtlc(200, 100, 0, true)
 	f, err := mgr.ForwardHTLC(htlc1, chanOutInfo)
 	require.NoError(t, err)
