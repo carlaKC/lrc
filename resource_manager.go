@@ -169,6 +169,7 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 	targetChannel, err := newTargetChannelTracker(
 		r.clock, r.revenueWindow, chanInfo,
 		r.protectedPercentage, r.newBucket,
+		r.blockTime, r.resolutionPeriod,
 	)
 	if err != nil {
 		return nil, err
@@ -346,6 +347,11 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	r.Lock()
 	defer r.Unlock()
 
+	incomingChannel, err := r.getChannelReputation(htlc.IncomingChannel)
+	if err != nil {
+		return nil, err
+	}
+
 	outgoingChannel, err := r.getTargetChannel(
 		htlc.OutgoingChannel, chanOutInfo,
 	)
@@ -353,56 +359,27 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 		return nil, err
 	}
 
-	// First, check whether the HTLC qualifies for protected resources.
-	reputation, err := r.sufficientReputation(
-		htlc, outgoingChannel.revenue.getValue(),
+	// Get a forwarding decision from the outgoing channel, considering
+	// the reputation of the incoming channel.
+	forwardDecision := outgoingChannel.AddInFlight(
+		incomingChannel.IncomingReputation(), htlc,
 	)
-	if err != nil {
-		return nil, err
-	}
-	sufficientRep := reputation.SufficientReputation()
 
-	// The HTLC has access to protected spots if it has sufficient
-	// reputation *and* the incoming htlc was endorsed.
-	htlcProtected := sufficientRep &&
-		htlc.IncomingEndorsed == EndorsementTrue
-
-	// Next, check whether there is space for the HTLC in the assigned
-	// bucket on the outgoing channel. If there is no space, we return
-	// false indicating that there are no available resources for the HTLC.
-	canForward := outgoingChannel.resourceBuckets.addHTLC(
-		htlcProtected, htlc.OutgoingAmount,
-	)
-	if !canForward {
-		return &ForwardDecision{
-			ReputationCheck: *reputation,
-			ForwardOutcome:  ForwardOutcomeNoResources,
-		}, nil
+	// If we have no resources for this htlc, no further action.
+	if forwardDecision.ForwardOutcome == ForwardOutcomeNoResources {
+		return &forwardDecision, nil
 	}
 
-	// If there is space for the HTLC, we've accounted for it in our
-	// resource bucketing so we go ahead and add it to the in-flight
-	// HTLCs on the incoming channel, returning true indicating that
-	// we're happy for the HTLC to proceed.
-	incomingChannel, err := r.getChannelReputation(htlc.IncomingChannel)
-	if err != nil {
-		return nil, err
-	}
+	// If we do proceed with the forward, then add it to our incoming
+	// link, tracking our outgoing endorsement status.
 	incomingChannel.AddInFlight(
-		htlc, NewEndorsementSignal(htlcProtected),
+		htlc, NewEndorsementSignal(
+			forwardDecision.ForwardOutcome ==
+				ForwardOutcomeEndorsed,
+		),
 	)
 
-	if htlcProtected {
-		return &ForwardDecision{
-			ReputationCheck: *reputation,
-			ForwardOutcome:  ForwardOutcomeEndorsed,
-		}, nil
-	}
-
-	return &ForwardDecision{
-		ReputationCheck: *reputation,
-		ForwardOutcome:  ForwardOutcomeUnendorsed,
-	}, nil
+	return &forwardDecision, nil
 }
 
 // ResolveHTLC updates the reputation manager's state to reflect the
@@ -455,30 +432,4 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	)
 
 	return inFlight, nil
-}
-
-// targetChannelTracker is used to track the revenue and resources of channels
-// that are requested as the outgoing link of a forward.
-type targetChannelTracker struct {
-	revenue *decayingAverage
-
-	resourceBuckets resourceBucketer
-}
-
-func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
-	channel *ChannelInfo, protectedPortion uint64,
-	newBucket ResourceBucketConstructor) (*targetChannelTracker, error) {
-
-	bucket, err := newBucket(
-		channel.InFlightLiquidity, channel.InFlightHTLC,
-		protectedPortion,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return &targetChannelTracker{
-		revenue:         newDecayingAverage(clock, revenueWindow),
-		resourceBuckets: bucket,
-	}, nil
 }
