@@ -85,10 +85,10 @@ type ChannelFetcher func(lnwire.ShortChannelID) (*ChannelInfo, error)
 type ChannelHistory func(id lnwire.ShortChannelID,
 	incomingOnly bool) ([]*ForwardedHTLC, error)
 
-// NewReputationManager creates a local reputation manager that will track
+// NewResourceManager creates a local reputation manager that will track
 // channel revenue over the window provided, and incoming channel reputation
 // over the window scaled by the multiplier.
-func NewReputationManager(revenueWindow time.Duration,
+func NewResourceManager(revenueWindow time.Duration,
 	reputationMultiplier int, resolutionPeriod time.Duration,
 	clock clock.Clock, channelHistory ChannelHistory,
 	protectedPercentage uint64, log Logger, blockTime float64) (

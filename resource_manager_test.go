@@ -25,7 +25,7 @@ func setup(t *testing.T, chanHist ChannelHistory) (*clock.TestClock,
 		}
 	}
 
-	r, err := NewReputationManager(
+	r, err := NewResourceManager(
 		time.Hour, 10, time.Second*90, testClock, chanHist, 50,
 		&TestLogger{}, 10,
 	)
