@@ -153,7 +153,7 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 	targetChannel, err := newTargetChannelTracker(
 		r.clock, r.revenueWindow, chanInfo,
 		r.protectedPercentage,
-		r.blockTime, r.resolutionPeriod,
+		r.blockTime, r.resolutionPeriod, r.log,
 	)
 	if err != nil {
 		return nil, err
@@ -393,27 +393,15 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 		return nil, err
 	}
 
-	// Add the fees for the forward to the outgoing channel _if_ the
-	// HTLC was successful.
+	// Update state on the outgoing channel as well, likewise if we can't
+	// find the channel we're receiving a resolution that we didn't catch
+	// on the add.
 	outgoingChannel := r.targetChannels[htlc.OutgoingChannel]
 	if outgoingChannel == nil {
 		return nil, fmt.Errorf("%w: outgoing: %v",
 			ErrChannelNotFound, htlc.OutgoingChannel.ToUint64())
 	}
-
-	if htlc.Success {
-		r.log.Infof("HTLC successful: adding fees to channel: %v: %v",
-			htlc.OutgoingChannel.ToUint64(),
-			inFlight.ForwardingFee())
-
-		outgoingChannel.revenue.add(float64(inFlight.ForwardingFee()))
-	}
-
-	// Clear out the resources in our resource bucket regardless of outcome.
-	outgoingChannel.resourceBuckets.removeHTLC(
-		inFlight.OutgoingEndorsed == EndorsementTrue,
-		inFlight.OutgoingAmount,
-	)
+	outgoingChannel.ResolveInFlight(htlc, inFlight)
 
 	return inFlight, nil
 }

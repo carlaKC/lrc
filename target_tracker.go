@@ -20,11 +20,13 @@ type targetChannelTracker struct {
 	resolutionPeriod time.Duration
 
 	resourceBuckets resourceBucketer
+
+	log Logger
 }
 
 func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
 	channel *ChannelInfo, protectedPortion uint64, blockTime float64,
-	resolutionPeriod time.Duration) (*targetChannelTracker, error) {
+	resolutionPeriod time.Duration, log Logger) (*targetChannelTracker, error) {
 
 	bucket, err := newBucketResourceManager(
 		channel.InFlightLiquidity, channel.InFlightHTLC,
@@ -39,6 +41,7 @@ func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
 		resourceBuckets:  bucket,
 		blockTime:        blockTime,
 		resolutionPeriod: resolutionPeriod,
+		log:              log,
 	}, nil
 }
 
@@ -84,4 +87,26 @@ func (t *targetChannelTracker) AddInFlight(incomingReputation IncomingReputation
 		ReputationCheck: reputationCheck,
 		ForwardOutcome:  outcome,
 	}
+}
+
+// ResolveInFlight removes a htlc from our internal state, crediting the fees
+// to our channel if it was successful.
+func (t *targetChannelTracker) ResolveInFlight(htlc *ResolvedHTLC,
+	inFlight *InFlightHTLC) {
+
+	// Add the fees for the forward to the outgoing channel _if_ the
+	// HTLC was successful.
+	if htlc.Success {
+		t.log.Infof("HTLC successful: adding fees to channel: %v: %v",
+			htlc.OutgoingChannel.ToUint64(),
+			inFlight.ForwardingFee())
+
+		t.revenue.add(float64(inFlight.ForwardingFee()))
+	}
+
+	// Clear out the resources in our resource bucket regardless of outcome.
+	t.resourceBuckets.removeHTLC(
+		inFlight.OutgoingEndorsed == EndorsementTrue,
+		inFlight.OutgoingAmount,
+	)
 }
