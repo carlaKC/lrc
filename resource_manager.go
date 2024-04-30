@@ -144,9 +144,9 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 		r.clock, r.revenueWindow, chanInfo,
 		r.protectedPercentage,
 	)
-        if err!=nil{
-                return nil, err
-        }
+	if err != nil {
+		return nil, err
+	}
 
 	// When adding a target channel, we want to account for all of its
 	// forwards so we pull full history for the channel.

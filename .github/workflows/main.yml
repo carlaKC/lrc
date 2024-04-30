@@ -1,0 +1,38 @@
+name: Go Tests and Format Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Go Tests and Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: '1.21'
+
+    - name: Run tests
+      run: |
+        go test ./...
+        test_status=$?
+        if [ $test_status -ne 0 ]; then
+          echo "Tests failed!"
+          exit 1
+        fi
+
+    - name: Check Go fmt
+      run: |
+        fmt_output=$(go fmt ./...)
+        if [[ -n "$fmt_output" ]]; then
+          echo "go fmt produced changes:"
+          echo "$fmt_output"
+          exit 1
+        fi
