@@ -2,6 +2,7 @@ package lrc
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/stretchr/testify/mock"
@@ -35,6 +36,8 @@ func (m *MockBucket) removeHTLC(protected bool, amount lnwire.MilliSatoshi) {
 	m.Called(protected, amount)
 }
 
+const mockProposedFee = 1000
+
 // mockProposedHtlc returns a proposed htlc over the channel pair provided.
 func mockProposedHtlc(chanIn, chanOut uint64, idx int,
 	endorsed bool) *ProposedHTLC {
@@ -44,8 +47,20 @@ func mockProposedHtlc(chanIn, chanOut uint64, idx int,
 		OutgoingChannel:  lnwire.NewShortChanIDFromInt(chanOut),
 		IncomingIndex:    idx,
 		IncomingEndorsed: NewEndorsementSignal(endorsed),
-		IncomingAmount:   11000,
+		IncomingAmount:   10000 + mockProposedFee,
 		OutgoingAmount:   10000,
 		CltvExpiryDelta:  80,
+	}
+}
+
+func resolutionForProposed(proposed *ProposedHTLC, success bool,
+	settleTS time.Time) *ResolvedHTLC {
+
+	return &ResolvedHTLC{
+		IncomingChannel:  proposed.IncomingChannel,
+		IncomingIndex:    proposed.IncomingIndex,
+		OutgoingChannel:  proposed.OutgoingChannel,
+		Success:          success,
+		TimestampSettled: settleTS,
 	}
 }
