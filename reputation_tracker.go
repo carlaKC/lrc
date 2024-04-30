@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/lightningnetwork/lnd/clock"
 )
 
 var (
@@ -12,6 +14,21 @@ var (
 	// HTLC that is not found in our in flight set.
 	ErrResolutionNotFound = errors.New("resolved htlc not found")
 )
+
+func newReputationTracker(clock clock.Clock, reputationWindow,
+	resolutionPeriod time.Duration, blockTime float64,
+	log Logger) *reputationTracker {
+
+	return &reputationTracker{
+		revenue: newDecayingAverage(
+			clock, reputationWindow,
+		),
+		inFlightHTLCs:    make(map[int]*InFlightHTLC),
+		blockTime:        blockTime,
+		resolutionPeriod: resolutionPeriod,
+		log:              log,
+	}
+}
 
 type reputationTracker struct {
 	// revenue tracks the bi-directional revenue that this channel has

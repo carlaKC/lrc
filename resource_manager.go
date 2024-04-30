@@ -225,15 +225,10 @@ func (r *ResourceManager) getChannelReputation(
 func (r *ResourceManager) newChannelReputation(
 	channel lnwire.ShortChannelID) (*reputationTracker, error) {
 
-	reputationTracker := &reputationTracker{
-		revenue: newDecayingAverage(
-			r.clock, r.reputationWindow,
-		),
-		inFlightHTLCs:    make(map[int]*InFlightHTLC),
-		blockTime:        r.blockTime,
-		resolutionPeriod: r.resolutionPeriod,
-		log:              r.log,
-	}
+	reputationTracker := newReputationTracker(
+		r.clock, r.reputationWindow, r.resolutionPeriod,
+		r.blockTime, r.log,
+	)
 
 	// When adding a reputation tracker, we only want to account for the
 	// incoming HTLCs that contributed to our revenue so we filter our
