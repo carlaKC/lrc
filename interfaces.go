@@ -1,10 +1,17 @@
 package lrc
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/lightningnetwork/lnd/lnwire"
+)
+
+var (
+	// ErrAmtOverflow indicates that a HTLC's amount is more than the
+	// maximum theoretical number of millisatoshis.
+	ErrAmtOverflow = errors.New("htlc amount overflows max msat")
 )
 
 // LocalResourceManager is an interface representing an entity that tracks
@@ -21,7 +28,7 @@ type LocalResourceManager interface {
 	// in-flight htlc has been resolved. It returs the in flight HTLC as
 	// tracked by the manager. If the HTLC is not known, it may return
 	// nil.
-	ResolveHTLC(htlc *ResolvedHTLC) *InFlightHTLC
+	ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC, error)
 }
 
 // ForwardDecision contains the action that should be taken for forwarding
@@ -40,21 +47,28 @@ type ForwardDecision struct {
 // and simulation, and wouldn't really be used much in a production
 // implementation.
 type ReputationCheck struct {
-	// IncomingRevenue represents the reputation that the forwarding
-	// channel has accrued over time.
-	IncomingRevenue float64
+	// IncomingReputation represents the reputation that has been built
+	// up by the incoming link, and any outstanding risk that it poses to
+	// us.
+	IncomingReputation
 
 	// OutgoingRevenue represents the cost of using the outgoing link,
 	// evaluated based on how valuable it has been to us in the past.
 	OutgoingRevenue float64
 
-	// InFlightRisk represents the outstanding risk of all of the
-	// forwarding party's currently in flight HTLCs.
-	InFlightRisk float64
-
 	// HTLCRisk represents the risk of the newly proposed HTLC, should it
 	// be used to jam our channel for its full expiry time.
 	HTLCRisk float64
+}
+
+type IncomingReputation struct {
+	// IncomingRevenue represents the reputation that the forwarding
+	// channel has accrued over time.
+	IncomingRevenue float64
+
+	// InFlightRisk represents the outstanding risk of all of the
+	// forwarding party's currently in flight HTLCs.
+	InFlightRisk float64
 }
 
 // SufficientReputation returns a boolean indicating whether a HTLC meets the
