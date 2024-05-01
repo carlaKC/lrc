@@ -98,3 +98,93 @@ func assertHtlcLifecycle(t *testing.T, tracker *reputationTracker, idx int,
 	require.NoError(t, err)
 	require.Len(t, tracker.inFlightHTLCs, 0)
 }
+
+// TestEffectiveFees tests calculation of effective fees for HTLCs.
+func TestEffectiveFees(t *testing.T) {
+	tests := []struct {
+		name         string
+		holdTime     time.Duration
+		endorsed     bool
+		success      bool
+		effectiveFee float64
+	}{
+		{
+			name:         "endoresd, fast success",
+			holdTime:     time.Second,
+			endorsed:     true,
+			success:      true,
+			effectiveFee: 1,
+		},
+		{
+			name:     "endorsed, slow success",
+			holdTime: time.Minute * 5,
+			endorsed: true,
+			success:  true,
+			// Held for 4 periods, but we get the fee.
+			effectiveFee: -3,
+		},
+		{
+			name:         "endorsed, fast failure",
+			holdTime:     time.Second,
+			endorsed:     true,
+			success:      false,
+			effectiveFee: 0,
+		},
+		{
+			name:     "endorsed, slow failure",
+			holdTime: time.Minute * 5,
+			endorsed: true,
+			success:  false,
+			// Held for 4 periods.
+			effectiveFee: -4,
+		},
+		{
+			name:         "unendorsed, fast success",
+			holdTime:     time.Second,
+			endorsed:     false,
+			success:      true,
+			effectiveFee: 1,
+		},
+		{
+			name:         "unendorsed, slow success",
+			holdTime:     time.Hour,
+			endorsed:     false,
+			success:      true,
+			effectiveFee: 0,
+		},
+		{
+			name:         "unendorsed, slow failure",
+			holdTime:     time.Hour,
+			endorsed:     false,
+			success:      false,
+			effectiveFee: 0,
+		},
+		{
+			name:         "unendorsed, fast failure",
+			holdTime:     time.Second,
+			endorsed:     false,
+			success:      false,
+			effectiveFee: 0,
+		},
+	}
+
+	for _, testCase := range tests {
+		htlc := &InFlightHTLC{
+			TimestampAdded: testTime,
+			ProposedHTLC: &ProposedHTLC{
+				IncomingEndorsed: NewEndorsementSignal(
+					testCase.endorsed,
+				),
+				// Make fee = 1 for easy calc.
+				IncomingAmount: 2,
+				OutgoingAmount: 1,
+			},
+		}
+		settled := htlc.TimestampAdded.Add(testCase.holdTime)
+
+		actual := effectiveFees(
+			time.Minute, settled, htlc, testCase.success,
+		)
+		require.Equal(t, testCase.effectiveFee, actual)
+	}
+}
