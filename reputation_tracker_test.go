@@ -90,13 +90,35 @@ func assertHtlcLifecycle(t *testing.T, tracker *reputationTracker, idx int,
 	// Note, we're just setting the outgoing endorsed to whatever our
 	// incoming endorsed is - we're not testing reputation here.
 	htlc0 := mockProposedHtlc(100, 200, idx, incomingEndorsed)
-	tracker.AddInFlight(htlc0, NewEndorsementSignal(incomingEndorsed))
+	err := tracker.AddInFlight(htlc0, NewEndorsementSignal(incomingEndorsed))
+	require.NoError(t, err)
 	require.Len(t, tracker.inFlightHTLCs, 1)
 
 	res0 := resolutionForProposed(htlc0, settle, testTime.Add(resolveTime))
-	_, err := tracker.ResolveInFlight(res0)
+	_, err = tracker.ResolveInFlight(res0)
 	require.NoError(t, err)
 	require.Len(t, tracker.inFlightHTLCs, 0)
+}
+
+// TestReputationTrackerErrs tests the error cases for a reputation tracker.
+func TestReputationTrackerErrs(t *testing.T) {
+	clock := clock.NewTestClock(testTime)
+	tracker := newReputationTracker(
+		clock, time.Hour, time.Second*90, 10.0, &TestLogger{},
+	)
+
+	htlc0 := mockProposedHtlc(100, 200, 0, true)
+	err := tracker.AddInFlight(htlc0, NewEndorsementSignal(true))
+	require.NoError(t, err)
+
+	// Assert that we error on duplicate htlcs.
+	err = tracker.AddInFlight(htlc0, NewEndorsementSignal(true))
+	require.ErrorIs(t, err, ErrDuplicateIndex)
+
+	htlc1 := mockProposedHtlc(100, 200, 1, true)
+	res1 := resolutionForProposed(htlc1, true, testTime)
+	_, err = tracker.ResolveInFlight(res1)
+	require.ErrorIs(t, err, ErrResolutionNotFound)
 }
 
 // TestEffectiveFees tests calculation of effective fees for HTLCs.
