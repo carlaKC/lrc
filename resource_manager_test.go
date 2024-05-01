@@ -12,22 +12,17 @@ import (
 // setup creates a resource manager for testing with some sane values set.
 // If a channel history function is not provided, we stub it out with an
 // empty impl.
-func setup(t *testing.T, chanHist ChannelHistory) (*clock.TestClock,
+func setup(t *testing.T) (*clock.TestClock,
 	*ResourceManager) {
 
 	testClock := clock.NewTestClock(testTime)
 
-	if chanHist == nil {
-		chanHist = func(id lnwire.ShortChannelID,
-			incomingOnly bool) ([]*ForwardedHTLC, error) {
-
-			return nil, nil
-		}
-	}
-
 	r, err := NewResourceManager(
-		time.Hour, 10, time.Second*90, testClock, chanHist,
-		// Don't return any start values for reputation.
+		time.Hour, 10, time.Second*90, testClock,
+		// Don't return any start values for reputation or revenue.
+		func(_ lnwire.ShortChannelID) (*DecayingAverageStart, error) {
+			return nil, nil
+		},
 		func(_ lnwire.ShortChannelID) (*DecayingAverageStart, error) {
 			return nil, nil
 		}, 50, &TestLogger{}, 10,
@@ -56,7 +51,7 @@ func TestResourceManager(t *testing.T) {
 	defer targetBucket.AssertExpectations(t)
 
 	// We don't care about a history bootstrap function here.
-	_, mgr := setup(t, nil)
+	_, mgr := setup(t)
 
 	htlc0 := mockProposedHtlc(100, 200, 0, true)
 	chanOutInfo := &ChannelInfo{
