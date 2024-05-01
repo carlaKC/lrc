@@ -6,6 +6,10 @@ import (
 	"github.com/lightningnetwork/lnd/clock"
 )
 
+// Compile time check that targetChannelTracker implements the targetMonitor
+// interface.
+var _ targetMonitor = (*targetChannelTracker)(nil)
+
 // targetChannelTracker is used to track the revenue and resources of channels
 // that are requested as the outgoing link of a forward.
 type targetChannelTracker struct {
@@ -26,7 +30,8 @@ type targetChannelTracker struct {
 
 func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
 	channel *ChannelInfo, protectedPortion uint64, blockTime float64,
-	resolutionPeriod time.Duration, log Logger) (*targetChannelTracker, error) {
+	resolutionPeriod time.Duration, log Logger,
+	startValue *DecayingAverageStart) (*targetChannelTracker, error) {
 
 	bucket, err := newBucketResourceManager(
 		channel.InFlightLiquidity, channel.InFlightHTLC,
@@ -37,7 +42,9 @@ func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
 	}
 
 	return &targetChannelTracker{
-		revenue:          newDecayingAverage(clock, revenueWindow, nil),
+		revenue: newDecayingAverage(
+			clock, revenueWindow, startValue,
+		),
 		resourceBuckets:  bucket,
 		blockTime:        blockTime,
 		resolutionPeriod: resolutionPeriod,

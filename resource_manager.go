@@ -3,7 +3,6 @@ package lrc
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -66,17 +65,21 @@ type ResourceManager struct {
 	// for a htlc to resolve in.
 	resolutionPeriod time.Duration
 
-	// channelHistory is a closure that's used to grab the historical
-	// forwards for a channel when we encounter it.
-	channelHistory ChannelHistory
-
 	// lookupReputation fetches previously persisted resolution values for
 	// a channel.
 	lookupReputation LookupReputation
 
+	// lookupRevenue fetches previously persisted revenue values for
+	// a channel.
+	lookupRevenue LookupRevenue
+
 	// newReputationMonitor creates a new reputation monitor, pulled
 	// out for mocking purposes in tests.
 	newReputationMonitor NewReputationMonitor
+
+	// newTargetMonitor creates a new target monitor, pull out for mocking
+	// in tests.
+	newTargetMonitor NewTargetMonitor
 
 	clock clock.Clock
 
@@ -92,30 +95,34 @@ type ResourceManager struct {
 
 type ChannelFetcher func(lnwire.ShortChannelID) (*ChannelInfo, error)
 
-// ChannelHistory is a closure type used to obtain the historical forwards for
-// a channel. If incomingOnly is true, then it'll filter for forwards where
-// the channel was the incoming nodes. Otherwise, it'll return forwards where
-// the channel was either the incoming or the outgoing link.
-type ChannelHistory func(id lnwire.ShortChannelID,
-	incomingOnly bool) ([]*ForwardedHTLC, error)
-
 // LookupReputation is the function signature for fetching a decaying average
 // start value for the give channel's reputation. If not history is available
 // it is expected to return nil.
 type LookupReputation func(id lnwire.ShortChannelID) (*DecayingAverageStart,
 	error)
 
+// LookupReputation is the function signature for fetching a decaying average
+// start value for the give channel's reputation. If not history is available
+// it is expected to return nil.
+type LookupRevenue func(id lnwire.ShortChannelID) (*DecayingAverageStart,
+	error)
+
 // NewReputationMonitor is a function signature for a constructor that creates
 // a new reputation monitor.
 type NewReputationMonitor func(start *DecayingAverageStart) reputationMonitor
+
+// NewTargetMonitor is a function signature for a constructor that creates
+// a new target channel revenue monitor.
+type NewTargetMonitor func(start *DecayingAverageStart,
+	chanInfo *ChannelInfo) (targetMonitor, error)
 
 // NewResourceManager creates a local reputation manager that will track
 // channel revenue over the window provided, and incoming channel reputation
 // over the window scaled by the multiplier.
 func NewResourceManager(revenueWindow time.Duration,
 	reputationMultiplier int, resolutionPeriod time.Duration,
-	clock clock.Clock, channelHistory ChannelHistory,
-	lookupReputation LookupReputation, protectedPercentage uint64,
+	clock clock.Clock, lookupReputation LookupReputation,
+	lookupRevenue LookupRevenue, protectedPercentage uint64,
 	log Logger, blockTime float64) (*ResourceManager, error) {
 
 	if protectedPercentage > 100 {
@@ -138,13 +145,23 @@ func NewResourceManager(revenueWindow time.Duration,
 			map[lnwire.ShortChannelID]*targetChannelTracker,
 		),
 		resolutionPeriod: resolutionPeriod,
-		channelHistory:   channelHistory,
 		lookupReputation: lookupReputation,
+		lookupRevenue:    lookupRevenue,
 		newReputationMonitor: func(start *DecayingAverageStart) reputationMonitor {
 			return newReputationTracker(
 				clock, reputationWindow, resolutionPeriod,
 				blockTime, log, start,
 			)
+		},
+		newTargetMonitor: func(start *DecayingAverageStart,
+			chanInfo *ChannelInfo) (targetMonitor, error) {
+
+			return newTargetChannelTracker(
+				clock, revenueWindow, chanInfo,
+				protectedPercentage,
+				blockTime, resolutionPeriod, log, start,
+			)
+
 		},
 		clock:     clock,
 		blockTime: blockTime,
@@ -177,54 +194,16 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 	chanInfo *ChannelInfo) (*targetChannelTracker, error) {
 
-	targetChannel, err := newTargetChannelTracker(
+	revenue, err := r.lookupRevenue(id)
+	if err != nil {
+		return nil, err
+	}
+
+	return newTargetChannelTracker(
 		r.clock, r.revenueWindow, chanInfo,
 		r.protectedPercentage,
-		r.blockTime, r.resolutionPeriod, r.log,
+		r.blockTime, r.resolutionPeriod, r.log, revenue,
 	)
-	if err != nil {
-		return nil, err
-	}
-
-	// When adding a target channel, we want to account for all of its
-	// forwards so we pull full history for the channel.
-	history, err := r.channelHistory(id, false)
-	if err != nil {
-		return nil, err
-	}
-
-	r.log.Infof("Adding new target channel: %v(%v) with: %v historical "+
-		"records (in flight count: %v, capacity: %v)",
-		id.ToUint64(), id, len(history), chanInfo.InFlightHTLC,
-		chanInfo.InFlightLiquidity)
-
-	// Add the bi-directional revenue for our forwards to the fresh tracker.
-	// We sort by resolved timestamp so that we can reply values for our
-	// decaying average.
-	sort.Slice(history, func(i, j int) bool {
-		return history[i].Resolution.TimestampSettled.Before(
-			history[j].Resolution.TimestampSettled,
-		)
-	})
-
-	for _, h := range history {
-		if !(h.InFlightHTLC.IncomingChannel == id ||
-			h.InFlightHTLC.OutgoingChannel == id) {
-
-			return nil, fmt.Errorf("forwarding history for: "+
-				"%v contains forward htat does not belong "+
-				"to channel (%v -> %v)", id,
-				h.InFlightHTLC.IncomingChannel,
-				h.Resolution.OutgoingChannel)
-		}
-
-		targetChannel.revenue.addAtTime(
-			float64(h.InFlightHTLC.ForwardingFee()),
-			h.Resolution.TimestampSettled,
-		)
-	}
-
-	return targetChannel, nil
 }
 
 // getChannelReputation looks up a channel's reputation tracker in the
