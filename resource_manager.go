@@ -56,7 +56,7 @@ type ResourceManager struct {
 	//   *incoming* HTLCs.
 	// - The incoming HTLCs that the channel has forwarded to the local
 	//   node that have not yet resolved.
-	channelReputation map[lnwire.ShortChannelID]*reputationTracker
+	channelReputation map[lnwire.ShortChannelID]reputationMonitor
 
 	// targetChannels tracks the routing revenue that channels have
 	// earned the local node for both incoming and outgoing HTLCs.
@@ -73,6 +73,10 @@ type ResourceManager struct {
 	// lookupReputation fetches previously persisted resolution values for
 	// a channel.
 	lookupReputation LookupReputation
+
+	// newReputationMonitor creates a new reputation monitor, pulled
+	// out for mocking purposes in tests.
+	newReputationMonitor NewReputationMonitor
 
 	clock clock.Clock
 
@@ -101,6 +105,10 @@ type ChannelHistory func(id lnwire.ShortChannelID,
 type LookupReputation func(id lnwire.ShortChannelID) (*DecayingAverageStart,
 	error)
 
+// NewReputationMonitor is a function signature for a constructor that creates
+// a new reputation monitor.
+type NewReputationMonitor func(start *DecayingAverageStart) reputationMonitor
+
 // NewResourceManager creates a local reputation manager that will track
 // channel revenue over the window provided, and incoming channel reputation
 // over the window scaled by the multiplier.
@@ -115,14 +123,16 @@ func NewResourceManager(revenueWindow time.Duration,
 			protectedPercentage)
 	}
 
+	reputationWindow := revenueWindow * time.Duration(
+		reputationMultiplier,
+	)
+
 	return &ResourceManager{
 		protectedPercentage: protectedPercentage,
 		revenueWindow:       revenueWindow,
-		reputationWindow: revenueWindow * time.Duration(
-			reputationMultiplier,
-		),
+		reputationWindow:    reputationWindow,
 		channelReputation: make(
-			map[lnwire.ShortChannelID]*reputationTracker,
+			map[lnwire.ShortChannelID]reputationMonitor,
 		),
 		targetChannels: make(
 			map[lnwire.ShortChannelID]*targetChannelTracker,
@@ -130,9 +140,15 @@ func NewResourceManager(revenueWindow time.Duration,
 		resolutionPeriod: resolutionPeriod,
 		channelHistory:   channelHistory,
 		lookupReputation: lookupReputation,
-		clock:            clock,
-		blockTime:        blockTime,
-		log:              log,
+		newReputationMonitor: func(start *DecayingAverageStart) reputationMonitor {
+			return newReputationTracker(
+				clock, reputationWindow, resolutionPeriod,
+				blockTime, log, start,
+			)
+		},
+		clock:     clock,
+		blockTime: blockTime,
+		log:       log,
 	}, nil
 }
 
@@ -216,7 +232,7 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 // function returns a pointer to the map entry which can be used to mutate its
 // underlying value.
 func (r *ResourceManager) getChannelReputation(
-	channel lnwire.ShortChannelID) (*reputationTracker, error) {
+	channel lnwire.ShortChannelID) (reputationMonitor, error) {
 
 	if r.channelReputation[channel] == nil {
 		startValue, err := r.lookupReputation(channel)
@@ -224,9 +240,8 @@ func (r *ResourceManager) getChannelReputation(
 			return nil, err
 		}
 
-		r.channelReputation[channel] = newReputationTracker(
-			r.clock, r.reputationWindow, r.resolutionPeriod,
-			r.blockTime, r.log, startValue,
+		r.channelReputation[channel] = r.newReputationMonitor(
+			startValue,
 		)
 	}
 
