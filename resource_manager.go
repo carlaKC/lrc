@@ -56,7 +56,7 @@ type ResourceManager struct {
 	//   *incoming* HTLCs.
 	// - The incoming HTLCs that the channel has forwarded to the local
 	//   node that have not yet resolved.
-	channelReputation map[lnwire.ShortChannelID]*reputationTracker
+	channelReputation map[lnwire.ShortChannelID]reputationMonitor
 
 	// targetChannels tracks the routing revenue that channels have
 	// earned the local node for both incoming and outgoing HTLCs.
@@ -69,6 +69,14 @@ type ResourceManager struct {
 	// channelHistory is a closure that's used to grab the historical
 	// forwards for a channel when we encounter it.
 	channelHistory ChannelHistory
+
+	// lookupReputation fetches previously persisted resolution values for
+	// a channel.
+	lookupReputation LookupReputation
+
+	// newReputationMonitor creates a new reputation monitor, pulled
+	// out for mocking purposes in tests.
+	newReputationMonitor NewReputationMonitor
 
 	clock clock.Clock
 
@@ -91,37 +99,56 @@ type ChannelFetcher func(lnwire.ShortChannelID) (*ChannelInfo, error)
 type ChannelHistory func(id lnwire.ShortChannelID,
 	incomingOnly bool) ([]*ForwardedHTLC, error)
 
+// LookupReputation is the function signature for fetching a decaying average
+// start value for the give channel's reputation. If not history is available
+// it is expected to return nil.
+type LookupReputation func(id lnwire.ShortChannelID) (*DecayingAverageStart,
+	error)
+
+// NewReputationMonitor is a function signature for a constructor that creates
+// a new reputation monitor.
+type NewReputationMonitor func(start *DecayingAverageStart) reputationMonitor
+
 // NewResourceManager creates a local reputation manager that will track
 // channel revenue over the window provided, and incoming channel reputation
 // over the window scaled by the multiplier.
 func NewResourceManager(revenueWindow time.Duration,
 	reputationMultiplier int, resolutionPeriod time.Duration,
 	clock clock.Clock, channelHistory ChannelHistory,
-	protectedPercentage uint64, log Logger, blockTime float64) (
-	*ResourceManager, error) {
+	lookupReputation LookupReputation, protectedPercentage uint64,
+	log Logger, blockTime float64) (*ResourceManager, error) {
 
 	if protectedPercentage > 100 {
 		return nil, fmt.Errorf("Percentage: %v > 100",
 			protectedPercentage)
 	}
 
+	reputationWindow := revenueWindow * time.Duration(
+		reputationMultiplier,
+	)
+
 	return &ResourceManager{
 		protectedPercentage: protectedPercentage,
 		revenueWindow:       revenueWindow,
-		reputationWindow: revenueWindow * time.Duration(
-			reputationMultiplier,
-		),
+		reputationWindow:    reputationWindow,
 		channelReputation: make(
-			map[lnwire.ShortChannelID]*reputationTracker,
+			map[lnwire.ShortChannelID]reputationMonitor,
 		),
 		targetChannels: make(
 			map[lnwire.ShortChannelID]*targetChannelTracker,
 		),
 		resolutionPeriod: resolutionPeriod,
 		channelHistory:   channelHistory,
-		clock:            clock,
-		blockTime:        blockTime,
-		log:              log,
+		lookupReputation: lookupReputation,
+		newReputationMonitor: func(start *DecayingAverageStart) reputationMonitor {
+			return newReputationTracker(
+				clock, reputationWindow, resolutionPeriod,
+				blockTime, log, start,
+			)
+		},
+		clock:     clock,
+		blockTime: blockTime,
+		log:       log,
 	}, nil
 }
 
@@ -205,79 +232,20 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 // function returns a pointer to the map entry which can be used to mutate its
 // underlying value.
 func (r *ResourceManager) getChannelReputation(
-	channel lnwire.ShortChannelID) (*reputationTracker, error) {
+	channel lnwire.ShortChannelID) (reputationMonitor, error) {
 
 	if r.channelReputation[channel] == nil {
-		var err error
-		r.channelReputation[channel], err = r.newChannelReputation(
-			channel,
-		)
+		startValue, err := r.lookupReputation(channel)
 		if err != nil {
 			return nil, err
 		}
+
+		r.channelReputation[channel] = r.newReputationMonitor(
+			startValue,
+		)
 	}
 
 	return r.channelReputation[channel], nil
-}
-
-// newChannelReputation creates a new channel reputation tracker for the
-// short channel id provided.
-func (r *ResourceManager) newChannelReputation(
-	channel lnwire.ShortChannelID) (*reputationTracker, error) {
-
-	reputationTracker := &reputationTracker{
-		revenue: newDecayingAverage(
-			r.clock, r.reputationWindow,
-		),
-		inFlightHTLCs:    make(map[int]*InFlightHTLC),
-		blockTime:        r.blockTime,
-		resolutionPeriod: r.resolutionPeriod,
-		log:              r.log,
-	}
-
-	// When adding a reputation tracker, we only want to account for the
-	// incoming HTLCs that contributed to our revenue so we filter our
-	// historical query by incomingOnly.
-	history, err := r.channelHistory(channel, true)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add the bi-directional revenue for our forwards to the fresh
-	// tracker. We sort by resolved timestamp so that we can replay values
-	// for our decaying average.
-	sort.Slice(history, func(i, j int) bool {
-		return history[i].Resolution.TimestampSettled.Before(
-			history[j].Resolution.TimestampSettled,
-		)
-	})
-
-	r.log.Infof("Adding new reputation tracker: %v (%v) with: %v "+
-		"historical records", channel.ToUint64(), channel, len(history))
-
-	for _, h := range history {
-		if !(h.InFlightHTLC.IncomingChannel == channel ||
-			h.InFlightHTLC.OutgoingChannel == channel) {
-
-			return nil, fmt.Errorf("forwarding history for: "+
-				"%v contains forward htat does not belong "+
-				"to channel (%v -> %v)", channel,
-				h.InFlightHTLC.IncomingChannel,
-				h.Resolution.OutgoingChannel)
-		}
-
-		effectiveFees := effectiveFees(
-			r.resolutionPeriod, h.Resolution.TimestampSettled,
-			&h.InFlightHTLC, h.Resolution.Success,
-		)
-		if err := reputationTracker.revenue.addAtTime(
-			effectiveFees, h.Resolution.TimestampSettled,
-		); err != nil {
-			return nil, err
-		}
-	}
-
-	return reputationTracker, nil
 }
 
 // sufficientReputation returns a reputation check that is used to determine
@@ -356,12 +324,14 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 
 	// If we do proceed with the forward, then add it to our incoming
 	// link, tracking our outgoing endorsement status.
-	incomingChannel.AddInFlight(
+	if err := incomingChannel.AddInFlight(
 		htlc, NewEndorsementSignal(
 			forwardDecision.ForwardOutcome ==
 				ForwardOutcomeEndorsed,
 		),
-	)
+	); err != nil {
+		return nil, err
+	}
 
 	return &forwardDecision, nil
 }

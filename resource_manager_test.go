@@ -26,8 +26,11 @@ func setup(t *testing.T, chanHist ChannelHistory) (*clock.TestClock,
 	}
 
 	r, err := NewResourceManager(
-		time.Hour, 10, time.Second*90, testClock, chanHist, 50,
-		&TestLogger{}, 10,
+		time.Hour, 10, time.Second*90, testClock, chanHist,
+		// Don't return any start values for reputation.
+		func(_ lnwire.ShortChannelID) (*DecayingAverageStart, error) {
+			return nil, nil
+		}, 50, &TestLogger{}, 10,
 	)
 	require.NoError(t, err)
 

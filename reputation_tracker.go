@@ -5,13 +5,38 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/lightningnetwork/lnd/clock"
 )
 
 var (
 	// ErrResolutionNotFound is returned when we get a resolution for a
 	// HTLC that is not found in our in flight set.
 	ErrResolutionNotFound = errors.New("resolved htlc not found")
+
+	// ErrDuplicateIndex is returned when an incoming htlc index is
+	// duplicated.
+	ErrDuplicateIndex = errors.New("htlc index duplicated")
 )
+
+// Compile time check that reputationTracker implements the reputationMonitor
+// interface.
+var _ reputationMonitor = (*reputationTracker)(nil)
+
+func newReputationTracker(clock clock.Clock, reputationWindow,
+	resolutionPeriod time.Duration, blockTime float64,
+	log Logger, startValue *DecayingAverageStart) *reputationTracker {
+
+	return &reputationTracker{
+		revenue: newDecayingAverage(
+			clock, reputationWindow, startValue,
+		),
+		inFlightHTLCs:    make(map[int]*InFlightHTLC),
+		blockTime:        blockTime,
+		resolutionPeriod: resolutionPeriod,
+		log:              log,
+	}
+}
 
 type reputationTracker struct {
 	// revenue tracks the bi-directional revenue that this channel has
@@ -42,7 +67,7 @@ func (r *reputationTracker) IncomingReputation() IncomingReputation {
 // AddInFlight updates the outgoing channel's view to include a new in flight
 // HTLC.
 func (r *reputationTracker) AddInFlight(htlc *ProposedHTLC,
-	outgoingEndorsed Endorsement) {
+	outgoingEndorsed Endorsement) error {
 
 	inFlightHTLC := &InFlightHTLC{
 		TimestampAdded:   r.revenue.clock.Now(),
@@ -52,10 +77,13 @@ func (r *reputationTracker) AddInFlight(htlc *ProposedHTLC,
 
 	// Sanity check whether the HTLC is already present.
 	if _, ok := r.inFlightHTLCs[htlc.IncomingIndex]; ok {
-		return
+		return fmt.Errorf("%w: %v", ErrDuplicateIndex,
+			htlc.IncomingIndex)
 	}
 
 	r.inFlightHTLCs[htlc.IncomingIndex] = inFlightHTLC
+
+	return nil
 }
 
 // ResolveInFlight removes a htlc from the reputation tracker's state,
