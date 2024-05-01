@@ -19,6 +19,10 @@ var (
 	ErrDuplicateIndex = errors.New("htlc index duplicated")
 )
 
+// Compile time check that reputationTracker implements the reputationMonitor
+// interface.
+var _ reputationMonitor = (*reputationTracker)(nil)
+
 func newReputationTracker(clock clock.Clock, reputationWindow,
 	resolutionPeriod time.Duration, blockTime float64,
 	log Logger) *reputationTracker {

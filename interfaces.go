@@ -139,6 +139,22 @@ type resourceBucketer interface {
 	removeHTLC(protected bool, amount lnwire.MilliSatoshi)
 }
 
+// reputationMonitor is an interface that represents the tracking of reputation
+// for links forwarding htlcs.
+type reputationMonitor interface {
+	// AddInFlight updates the reputation monitor for an incoming link to
+	// reflect that it currently has an outstanding forwarded htlc.
+	AddInFlight(htlc *ProposedHTLC, outgoingEndorsed Endorsement) error
+
+	// ResolveInFlight updates the reputation monitor to resolve a
+	// previously in-flight htlc.
+	ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC, error)
+
+	// IncomingReputation returns the details of a reputation monitor's
+	// current standing.
+	IncomingReputation() IncomingReputation
+}
+
 // Endorsement represents the endorsement signaling that is passed along with
 // a HTLC.
 type Endorsement uint8
