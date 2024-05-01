@@ -77,6 +77,10 @@ type ResourceManager struct {
 	// out for mocking purposes in tests.
 	newReputationMonitor NewReputationMonitor
 
+	// newTargetMonitor creates a new target monitor, pull out for mocking
+	// in tests.
+	newTargetMonitor NewTargetMonitor
+
 	clock clock.Clock
 
 	log Logger
@@ -106,6 +110,11 @@ type LookupRevenue func(id lnwire.ShortChannelID) (*DecayingAverageStart,
 // NewReputationMonitor is a function signature for a constructor that creates
 // a new reputation monitor.
 type NewReputationMonitor func(start *DecayingAverageStart) reputationMonitor
+
+// NewTargetMonitor is a function signature for a constructor that creates
+// a new target channel revenue monitor.
+type NewTargetMonitor func(start *DecayingAverageStart,
+	chanInfo *ChannelInfo) (targetMonitor, error)
 
 // NewResourceManager creates a local reputation manager that will track
 // channel revenue over the window provided, and incoming channel reputation
@@ -143,6 +152,16 @@ func NewResourceManager(revenueWindow time.Duration,
 				clock, reputationWindow, resolutionPeriod,
 				blockTime, log, start,
 			)
+		},
+		newTargetMonitor: func(start *DecayingAverageStart,
+			chanInfo *ChannelInfo) (targetMonitor, error) {
+
+			return newTargetChannelTracker(
+				clock, revenueWindow, chanInfo,
+				protectedPercentage,
+				blockTime, resolutionPeriod, log, start,
+			)
+
 		},
 		clock:     clock,
 		blockTime: blockTime,
