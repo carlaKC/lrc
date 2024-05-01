@@ -25,11 +25,11 @@ var _ reputationMonitor = (*reputationTracker)(nil)
 
 func newReputationTracker(clock clock.Clock, reputationWindow,
 	resolutionPeriod time.Duration, blockTime float64,
-	log Logger) *reputationTracker {
+	log Logger, startValue *DecayingAverageStart) *reputationTracker {
 
 	return &reputationTracker{
 		revenue: newDecayingAverage(
-			clock, reputationWindow, nil,
+			clock, reputationWindow, startValue,
 		),
 		inFlightHTLCs:    make(map[int]*InFlightHTLC),
 		blockTime:        blockTime,
