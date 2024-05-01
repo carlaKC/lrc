@@ -37,7 +37,7 @@ func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
 	}
 
 	return &targetChannelTracker{
-		revenue:          newDecayingAverage(clock, revenueWindow),
+		revenue:          newDecayingAverage(clock, revenueWindow, nil),
 		resourceBuckets:  bucket,
 		blockTime:        blockTime,
 		resolutionPeriod: resolutionPeriod,

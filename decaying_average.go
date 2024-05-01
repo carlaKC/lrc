@@ -8,6 +8,13 @@ import (
 	"github.com/lightningnetwork/lnd/clock"
 )
 
+// DecayingAverageStart represents an optional start value to create a
+// decaying average with.
+type DecayingAverageStart struct {
+	LastUpdate time.Time
+	Value      float64
+}
+
 type decayingAverage struct {
 	lastUpdate time.Time
 	value      float64
@@ -22,13 +29,22 @@ func calcualteDecayRate(period time.Duration) float64 {
 }
 
 // newDecayingAverage creates a decaying average over the period provided, with
-// a starting value of 0.
-func newDecayingAverage(clock clock.Clock,
-	period time.Duration) *decayingAverage {
+// a starting value of 0 if no start value is provided and bootstrapping from
+// existing values otherwise.
+func newDecayingAverage(clock clock.Clock, period time.Duration,
+	startValue *DecayingAverageStart) *decayingAverage {
+
+	lastUpdate := time.Time{}
+	value := 0.0
+
+	if startValue != nil {
+		lastUpdate = startValue.LastUpdate
+		value = startValue.Value
+	}
 
 	return &decayingAverage{
-		lastUpdate: time.Time{},
-		value:      0,
+		lastUpdate: lastUpdate,
+		value:      value,
 		decayRate:  calcualteDecayRate(period),
 		clock:      clock,
 	}

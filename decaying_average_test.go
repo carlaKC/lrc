@@ -14,7 +14,7 @@ var testTime = time.Date(2024, time.January, 5, 0, 0, 0, 0, time.UTC)
 func setupTest(period time.Duration) (*clock.TestClock, *decayingAverage) {
 	testClock := clock.NewTestClock(testTime)
 
-	return testClock, newDecayingAverage(testClock, period)
+	return testClock, newDecayingAverage(testClock, period, nil)
 }
 
 // TestDecayingAverage tests basic operation of our decaying average

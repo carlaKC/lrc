@@ -29,7 +29,7 @@ func newReputationTracker(clock clock.Clock, reputationWindow,
 
 	return &reputationTracker{
 		revenue: newDecayingAverage(
-			clock, reputationWindow,
+			clock, reputationWindow, nil,
 		),
 		inFlightHTLCs:    make(map[int]*InFlightHTLC),
 		blockTime:        blockTime,
