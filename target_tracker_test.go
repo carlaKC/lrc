@@ -15,7 +15,7 @@ func TestTargetChannelTracker(t *testing.T) {
 	testClock := clock.NewTestClock(testTime)
 	tracker, err := newTargetChannelTracker(
 		testClock, time.Hour, &ChannelInfo{}, 50, 10, time.Second*90,
-		&TestLogger{},
+		&TestLogger{}, nil,
 	)
 	require.NoError(t, err)
 

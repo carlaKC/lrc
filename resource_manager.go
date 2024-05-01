@@ -180,7 +180,7 @@ func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
 	targetChannel, err := newTargetChannelTracker(
 		r.clock, r.revenueWindow, chanInfo,
 		r.protectedPercentage,
-		r.blockTime, r.resolutionPeriod, r.log,
+		r.blockTime, r.resolutionPeriod, r.log, nil,
 	)
 	if err != nil {
 		return nil, err
