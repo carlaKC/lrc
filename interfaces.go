@@ -155,6 +155,19 @@ type reputationMonitor interface {
 	IncomingReputation() IncomingReputation
 }
 
+// targetMonitor is an interface that represents the tracking of forwading
+// revenues for targeted outgoing links.
+type targetMonitor interface {
+	// AddInFlight proposes the addition of a htlc to the outgoing channel,
+	// returning a forwarding decision for the htlc based on its
+	// endorsement and the reputation of the incoming link.
+	AddInFlight(incomingReputation IncomingReputation,
+		htlc *ProposedHTLC) ForwardDecision
+
+	// ResolveInFlight removes a htlc from the outgoing channel.
+	ResolveInFlight(htlc *ResolvedHTLC, inFlight *InFlightHTLC)
+}
+
 // Endorsement represents the endorsement signaling that is passed along with
 // a HTLC.
 type Endorsement uint8

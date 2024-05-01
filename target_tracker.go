@@ -6,6 +6,10 @@ import (
 	"github.com/lightningnetwork/lnd/clock"
 )
 
+// Compile time check that targetChannelTracker implements the targetMonitor
+// interface.
+var _ targetMonitor = (*targetChannelTracker)(nil)
+
 // targetChannelTracker is used to track the revenue and resources of channels
 // that are requested as the outgoing link of a forward.
 type targetChannelTracker struct {
