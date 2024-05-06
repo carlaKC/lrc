@@ -59,7 +59,7 @@ type ResourceManager struct {
 
 	// targetChannels tracks the routing revenue that channels have
 	// earned the local node for both incoming and outgoing HTLCs.
-	targetChannels map[lnwire.ShortChannelID]*targetChannelTracker
+	targetChannels map[lnwire.ShortChannelID]targetMonitor
 
 	// resolutionPeriod is the period of time that is considered reasonable
 	// for a htlc to resolve in.
@@ -142,7 +142,7 @@ func NewResourceManager(revenueWindow time.Duration,
 			map[lnwire.ShortChannelID]reputationMonitor,
 		),
 		targetChannels: make(
-			map[lnwire.ShortChannelID]*targetChannelTracker,
+			map[lnwire.ShortChannelID]targetMonitor,
 		),
 		resolutionPeriod: resolutionPeriod,
 		lookupReputation: lookupReputation,
@@ -174,12 +174,17 @@ func NewResourceManager(revenueWindow time.Duration,
 // returns a pointer to the map entry which can be used to mutate its
 // underlying value.
 func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
-	chanInfo *ChannelInfo) (*targetChannelTracker, error) {
+	chanInfo *ChannelInfo) (targetMonitor, error) {
 
 	if r.targetChannels[channel] == nil {
-		var err error
-		r.targetChannels[channel], err = r.newTargetChannel(
-			channel, chanInfo,
+
+		revenue, err := r.lookupRevenue(channel)
+		if err != nil {
+			return nil, err
+		}
+
+		r.targetChannels[channel], err = r.newTargetMonitor(
+			revenue, chanInfo,
 		)
 		if err != nil {
 			return nil, err
@@ -187,23 +192,6 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 	}
 
 	return r.targetChannels[channel], nil
-}
-
-// newTargetChannel creates a new target channel tracker for the short channel
-// id provided.
-func (r *ResourceManager) newTargetChannel(id lnwire.ShortChannelID,
-	chanInfo *ChannelInfo) (*targetChannelTracker, error) {
-
-	revenue, err := r.lookupRevenue(id)
-	if err != nil {
-		return nil, err
-	}
-
-	return newTargetChannelTracker(
-		r.clock, r.revenueWindow, chanInfo,
-		r.protectedPercentage,
-		r.blockTime, r.resolutionPeriod, r.log, revenue,
-	)
 }
 
 // getChannelReputation looks up a channel's reputation tracker in the
