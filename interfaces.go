@@ -191,10 +191,10 @@ func (e Endorsement) String() string {
 		return "NULL"
 
 	case EndorsementTrue:
-		return "T"
+		return "endorsed"
 
 	case EndorsementFalse:
-		return "F"
+		return "unendorsed"
 
 	default:
 		return "Unknown"
