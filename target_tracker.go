@@ -28,14 +28,13 @@ type targetChannelTracker struct {
 	log Logger
 }
 
-func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
-	channel *ChannelInfo, protectedPortion uint64, blockTime float64,
-	resolutionPeriod time.Duration, log Logger,
+func newTargetChannelTracker(clock clock.Clock, params ManagerParams,
+	channel *ChannelInfo, log Logger,
 	startValue *DecayingAverageStart) (*targetChannelTracker, error) {
 
 	bucket, err := newBucketResourceManager(
 		channel.InFlightLiquidity, channel.InFlightHTLC,
-		protectedPortion,
+		params.ProtectedPercentage,
 	)
 	if err != nil {
 		return nil, err
@@ -43,11 +42,11 @@ func newTargetChannelTracker(clock clock.Clock, revenueWindow time.Duration,
 
 	return &targetChannelTracker{
 		revenue: newDecayingAverage(
-			clock, revenueWindow, startValue,
+			clock, params.RevenueWindow, startValue,
 		),
 		resourceBuckets:  bucket,
-		blockTime:        blockTime,
-		resolutionPeriod: resolutionPeriod,
+		blockTime:        float64(params.BlockTime),
+		resolutionPeriod: params.ResolutionPeriod,
 		log:              log,
 	}, nil
 }

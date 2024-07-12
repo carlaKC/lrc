@@ -2,7 +2,6 @@ package lrc
 
 import (
 	"testing"
-	"time"
 
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/stretchr/testify/require"
@@ -14,8 +13,7 @@ func TestTargetChannelTracker(t *testing.T) {
 
 	testClock := clock.NewTestClock(testTime)
 	tracker, err := newTargetChannelTracker(
-		testClock, time.Hour, &ChannelInfo{}, 50, 10, time.Second*90,
-		&TestLogger{}, nil,
+		testClock, testParams, &ChannelInfo{}, &TestLogger{}, nil,
 	)
 	require.NoError(t, err)
 

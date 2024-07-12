@@ -15,7 +15,7 @@ import (
 func TestReputationTracker(t *testing.T) {
 	clock := clock.NewTestClock(testTime)
 	tracker := newReputationTracker(
-		clock, time.Hour, time.Second*90, 10.0, &TestLogger{}, nil,
+		clock, testParams, &TestLogger{}, nil,
 	)
 	require.Len(t, tracker.inFlightHTLCs, 0)
 
@@ -104,7 +104,7 @@ func assertHtlcLifecycle(t *testing.T, tracker *reputationTracker, idx int,
 func TestReputationTrackerErrs(t *testing.T) {
 	clock := clock.NewTestClock(testTime)
 	tracker := newReputationTracker(
-		clock, time.Hour, time.Second*90, 10.0, &TestLogger{}, nil,
+		clock, testParams, &TestLogger{}, nil,
 	)
 
 	htlc0 := mockProposedHtlc(100, 200, 0, true)

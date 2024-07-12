@@ -29,21 +29,8 @@ var _ LocalResourceManager = (*ResourceManager)(nil)
 // the thresholds required to earn endorsement on the outgoing channels
 // required to implement resource bucketing for a node's channels.
 type ResourceManager struct {
-	// protectedPercentage is the percentage of liquidity and slots that
-	// are reserved for endorsed HTLCs from peers with sufficient
-	// reputation.
-	//
-	// Note: this percentage could be different for liquidity and slots,
-	// but is set to one value for simplicity here.
-	protectedPercentage uint64
-
-	// reputationWindow is the period of time over which decaying averages
-	// of reputation revenue for incoming channels are calculated.
-	reputationWindow time.Duration
-
-	// revenueWindow in the period of time over which decaying averages of
-	// routing revenue for requested outgoing channels are calculated.
-	revenueWindow time.Duration
+	// Parameters for reputation algorithm.
+	params ManagerParams
 
 	// incomingRevenue maps channel ids to decaying averages of the
 	// revenue that individual channels have earned the local node as
@@ -85,10 +72,6 @@ type ResourceManager struct {
 
 	log Logger
 
-	// Expected time for blocks, included to allow simulation with faster
-	// block time.
-	blockTime float64
-
 	// A single mutex guarding access to the manager.
 	sync.Mutex
 }
@@ -116,56 +99,88 @@ type NewReputationMonitor func(start *DecayingAverageStart) reputationMonitor
 type NewTargetMonitor func(start *DecayingAverageStart,
 	chanInfo *ChannelInfo) (targetMonitor, error)
 
+type ManagerParams struct {
+	// RevenueWindow is the amount of time that we examine the revenue of
+	// outgoing links over.
+	RevenueWindow time.Duration
+
+	// ReputationMultiplier is the multiplier on RevenueWindow that is
+	// used to determine the longer period of time that incoming links
+	// reputation is assessed over.
+	ReputationMultiplier uint8
+
+	// ProtectedPercentage is the percentage of liquidity and slots that
+	// are reserved for high reputation, endorsed HTLCs.
+	ProtectedPercentage uint64
+
+	// ResolutionPeriod is the amount of time that we reasonably expect
+	// HTLCs to complete within.
+	ResolutionPeriod time.Duration
+
+	// BlockTime is the expected block time.
+	BlockTime time.Duration
+}
+
+// validate that we have sane parameters.
+func (p *ManagerParams) validate() error {
+	if p.ProtectedPercentage > 100 {
+		return fmt.Errorf("Percentage: %v > 100", p.ProtectedPercentage)
+	}
+
+	if p.ResolutionPeriod == 0 {
+		return errors.New("Resolution period must be > 0")
+	}
+
+	if p.BlockTime == 0 {
+		return errors.New("Block time must be > 0")
+	}
+
+	return nil
+}
+
+// revenueWindow returns the period over which we examine revenue.
+func (p *ManagerParams) reputationWindow() time.Duration {
+	return p.RevenueWindow * time.Duration(
+		p.ReputationMultiplier,
+	)
+}
+
 // NewResourceManager creates a local reputation manager that will track
 // channel revenue over the window provided, and incoming channel reputation
 // over the window scaled by the multiplier.
-func NewResourceManager(revenueWindow time.Duration,
-	reputationMultiplier int, resolutionPeriod time.Duration,
-	clock clock.Clock, lookupReputation LookupReputation,
-	lookupRevenue LookupRevenue, protectedPercentage uint64,
-	log Logger, blockTime float64) (*ResourceManager, error) {
+func NewResourceManager(params ManagerParams, clock clock.Clock,
+	lookupReputation LookupReputation,
+	lookupRevenue LookupRevenue, log Logger) (*ResourceManager, error) {
 
-	if protectedPercentage > 100 {
-		return nil, fmt.Errorf("Percentage: %v > 100",
-			protectedPercentage)
+	if err := params.validate(); err != nil {
+		return nil, err
 	}
-
-	reputationWindow := revenueWindow * time.Duration(
-		reputationMultiplier,
-	)
-
 	return &ResourceManager{
-		protectedPercentage: protectedPercentage,
-		revenueWindow:       revenueWindow,
-		reputationWindow:    reputationWindow,
+		params: params,
 		channelReputation: make(
 			map[lnwire.ShortChannelID]reputationMonitor,
 		),
 		targetChannels: make(
 			map[lnwire.ShortChannelID]targetMonitor,
 		),
-		resolutionPeriod: resolutionPeriod,
+		resolutionPeriod: params.ResolutionPeriod,
 		lookupReputation: lookupReputation,
 		lookupRevenue:    lookupRevenue,
 		newReputationMonitor: func(start *DecayingAverageStart) reputationMonitor {
 			return newReputationTracker(
-				clock, reputationWindow, resolutionPeriod,
-				blockTime, log, start,
+				clock, params, log, start,
 			)
 		},
 		newTargetMonitor: func(start *DecayingAverageStart,
 			chanInfo *ChannelInfo) (targetMonitor, error) {
 
 			return newTargetChannelTracker(
-				clock, revenueWindow, chanInfo,
-				protectedPercentage,
-				blockTime, resolutionPeriod, log, start,
+				clock, params, chanInfo, log, start,
 			)
 
 		},
-		clock:     clock,
-		blockTime: blockTime,
-		log:       log,
+		clock: clock,
+		log:   log,
 	}, nil
 }
 
@@ -230,7 +245,7 @@ func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
 		IncomingReputation: incomingChannel.IncomingReputation(),
 		OutgoingRevenue:    outgoingChannelRevenue,
 		HTLCRisk: outstandingRisk(
-			r.blockTime, htlc, r.resolutionPeriod,
+			float64(r.params.BlockTime), htlc, r.resolutionPeriod,
 		),
 	}, nil
 }

@@ -23,17 +23,16 @@ var (
 // interface.
 var _ reputationMonitor = (*reputationTracker)(nil)
 
-func newReputationTracker(clock clock.Clock, reputationWindow,
-	resolutionPeriod time.Duration, blockTime float64,
+func newReputationTracker(clock clock.Clock, params ManagerParams,
 	log Logger, startValue *DecayingAverageStart) *reputationTracker {
 
 	return &reputationTracker{
 		revenue: newDecayingAverage(
-			clock, reputationWindow, startValue,
+			clock, params.reputationWindow(), startValue,
 		),
 		inFlightHTLCs:    make(map[int]*InFlightHTLC),
-		blockTime:        blockTime,
-		resolutionPeriod: resolutionPeriod,
+		blockTime:        float64(params.BlockTime),
+		resolutionPeriod: params.ResolutionPeriod,
 		log:              log,
 	}
 }
