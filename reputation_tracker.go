@@ -94,8 +94,9 @@ func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
 
 	inFlight, ok := r.inFlightHTLCs[htlc.IncomingIndex]
 	if !ok {
-		return nil, fmt.Errorf("%w: %v/%v", ErrResolutionNotFound,
-			htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex)
+		return nil, fmt.Errorf("%w: %v/%v -> %v", ErrResolutionNotFound,
+			htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex,
+			htlc.OutgoingChannel.ToUint64())
 	}
 
 	delete(r.inFlightHTLCs, inFlight.IncomingIndex)

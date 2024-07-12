@@ -192,7 +192,6 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 	chanInfo *ChannelInfo) (targetMonitor, error) {
 
 	if r.targetChannels[channel] == nil {
-
 		revenue, err := r.lookupRevenue(channel)
 		if err != nil {
 			return nil, err
@@ -204,6 +203,9 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 		if err != nil {
 			return nil, err
 		}
+
+		r.log.Infof("Added new revenue channel: %v with start: %v",
+			channel.ToUint64(), revenue)
 	}
 
 	return r.targetChannels[channel], nil
@@ -225,6 +227,9 @@ func (r *ResourceManager) getChannelReputation(
 		r.channelReputation[channel] = r.newReputationMonitor(
 			startValue,
 		)
+
+		r.log.Infof("Adding new channel reputation: %v with start: %v",
+			channel.ToUint64(), startValue)
 	}
 
 	return r.channelReputation[channel], nil
@@ -333,8 +338,11 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	// effective fees to the incoming channel's reputation.
 	incomingChannel := r.channelReputation[htlc.IncomingChannel]
 	if incomingChannel == nil {
-		return nil, fmt.Errorf("%w: incoming %v",
-			ErrChannelNotFound, htlc.IncomingChannel.ToUint64())
+		return nil, fmt.Errorf("Incoming success=%v %w: %v(%v) -> %v",
+			htlc.Success, ErrChannelNotFound,
+			htlc.IncomingChannel.ToUint64(),
+			htlc.IncomingIndex, htlc.OutgoingChannel.ToUint64(),
+		)
 	}
 
 	// Resolve the HTLC on the incoming channel. If it's not found, it's
@@ -350,8 +358,11 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	// on the add.
 	outgoingChannel := r.targetChannels[htlc.OutgoingChannel]
 	if outgoingChannel == nil {
-		return nil, fmt.Errorf("%w: outgoing: %v",
-			ErrChannelNotFound, htlc.OutgoingChannel.ToUint64())
+		return nil, fmt.Errorf("Outgoing success=%v %w: %v(%v) -> %v",
+			htlc.Success, ErrChannelNotFound,
+			htlc.IncomingChannel.ToUint64(),
+			htlc.IncomingIndex,
+			htlc.OutgoingChannel.ToUint64())
 	}
 	outgoingChannel.ResolveInFlight(htlc, inFlight)
 
