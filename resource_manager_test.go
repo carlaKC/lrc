@@ -10,6 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var (
+	testParams = ManagerParams{
+		RevenueWindow:        time.Hour,
+		ReputationMultiplier: 24,
+		BlockTime:            10,
+		ProtectedPercentage:  50,
+		ResolutionPeriod:     time.Second * 90,
+	}
+)
+
 // setup creates a resource manager for testing with some sane values set.
 // If a channel history function is not provided, we stub it out with an
 // empty impl.
@@ -19,14 +29,15 @@ func setup(t *testing.T, mockDeps *mockDeps) (*clock.TestClock,
 	testClock := clock.NewTestClock(testTime)
 
 	r, err := NewResourceManager(
-		time.Hour, 10, time.Second*90, testClock,
+		testParams,
+		testClock,
 		// Don't return any start values for reputation or revenue.
 		func(_ lnwire.ShortChannelID) (*DecayingAverageStart, error) {
 			return nil, nil
 		},
 		func(_ lnwire.ShortChannelID) (*DecayingAverageStart, error) {
 			return nil, nil
-		}, 50, &TestLogger{}, 10,
+		}, 50, &TestLogger{},
 	)
 	require.NoError(t, err)
 
@@ -140,8 +151,8 @@ func TestResourceManager(t *testing.T) {
 	htlc4 := mockProposedHtlc(100, 500, 1, false)
 	htlc4res := resolutionForProposed(htlc4, false, testTime)
 	chan100Incoming.On("ResolveInFlight", htlc4res).Once().Return(
-                &InFlightHTLC{}, nil,
-        )
+		&InFlightHTLC{}, nil,
+	)
 
 	_, err = mgr.ResolveHTLC(htlc4res)
 	require.ErrorIs(t, err, ErrChannelNotFound)
