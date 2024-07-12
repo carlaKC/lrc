@@ -37,7 +37,7 @@ func setup(t *testing.T, mockDeps *mockDeps) (*clock.TestClock,
 		},
 		func(_ lnwire.ShortChannelID) (*DecayingAverageStart, error) {
 			return nil, nil
-		}, 50, &TestLogger{},
+		}, &TestLogger{},
 	)
 	require.NoError(t, err)
 

@@ -98,11 +98,13 @@ func TestBootstrap(t *testing.T) {
 	revenueTracker.add(float64(fwd3.ForwardingFee()))
 	outgoingHTLCs = append(outgoingHTLCs, fwd3)
 
-	// Assert that we fail if we use the wrong htlcs.
+	// Assert that revenue can use incoming and outgoing htlcs.
 	_, err = BootstrapRevenue(
 		scid, testParams, incomingHTLCs, testClock,
 	)
-	require.Error(t, err)
+
+	// Assert that reputation can only use incoming htlcs.
+	require.NoError(t, err)
 	_, err = BootstrapReputation(
 		scid, testParams, outgoingHTLCs, testClock,
 	)

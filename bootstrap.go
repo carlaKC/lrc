@@ -103,7 +103,9 @@ func BootstrapRevenue(scid lnwire.ShortChannelID, params ManagerParams,
 	var revenueAvg *decayingAverage
 
 	for _, h := range history {
-		if h.InFlightHTLC.OutgoingChannel != scid {
+		if h.InFlightHTLC.OutgoingChannel != scid &&
+			h.InFlightHTLC.IncomingChannel != scid {
+
 			return nil, fmt.Errorf("revenue history for: "+
 				"%v contains forward that does not belong "+
 				"to channel (%v -> %v)", scid,
