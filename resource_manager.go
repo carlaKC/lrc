@@ -338,10 +338,11 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	// effective fees to the incoming channel's reputation.
 	incomingChannel := r.channelReputation[htlc.IncomingChannel]
 	if incomingChannel == nil {
-		return nil, fmt.Errorf("Incoming success=%v %w: %v(%v) -> %v",
+		return nil, fmt.Errorf("Incoming success=%v %w: %v(%v) -> %v(%v)",
 			htlc.Success, ErrChannelNotFound,
 			htlc.IncomingChannel.ToUint64(),
 			htlc.IncomingIndex, htlc.OutgoingChannel.ToUint64(),
+			htlc.OutgoingIndex,
 		)
 	}
 
@@ -368,11 +369,12 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	// HTLC, as that's where we added the in-flight HTLC.
 	outgoingChannel := r.targetChannels[inFlight.OutgoingChannel]
 	if outgoingChannel == nil {
-		return nil, fmt.Errorf("Outgoing success=%v %w: %v(%v) -> %v",
+		return nil, fmt.Errorf("Outgoing success=%v %w: %v(%v) -> %v(%v)",
 			htlc.Success, ErrChannelNotFound,
 			htlc.IncomingChannel.ToUint64(),
 			htlc.IncomingIndex,
-			htlc.OutgoingChannel.ToUint64())
+			htlc.OutgoingChannel.ToUint64(),
+			htlc.OutgoingIndex)
 	}
 	outgoingChannel.ResolveInFlight(htlc, inFlight)
 
