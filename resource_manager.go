@@ -192,7 +192,6 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 	chanInfo *ChannelInfo) (targetMonitor, error) {
 
 	if r.targetChannels[channel] == nil {
-
 		revenue, err := r.lookupRevenue(channel)
 		if err != nil {
 			return nil, err
@@ -204,6 +203,9 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 		if err != nil {
 			return nil, err
 		}
+
+		r.log.Infof("Added new revenue channel: %v with start: %v",
+			channel.ToUint64(), revenue)
 	}
 
 	return r.targetChannels[channel], nil
@@ -225,6 +227,9 @@ func (r *ResourceManager) getChannelReputation(
 		r.channelReputation[channel] = r.newReputationMonitor(
 			startValue,
 		)
+
+		r.log.Infof("Adding new channel reputation: %v with start: %v",
+			channel.ToUint64(), startValue)
 	}
 
 	return r.channelReputation[channel], nil
@@ -333,8 +338,12 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	// effective fees to the incoming channel's reputation.
 	incomingChannel := r.channelReputation[htlc.IncomingChannel]
 	if incomingChannel == nil {
-		return nil, fmt.Errorf("%w: incoming %v",
-			ErrChannelNotFound, htlc.IncomingChannel.ToUint64())
+		return nil, fmt.Errorf("Incoming success=%v %w: %v(%v) -> %v(%v)",
+			htlc.Success, ErrChannelNotFound,
+			htlc.IncomingChannel.ToUint64(),
+			htlc.IncomingIndex, htlc.OutgoingChannel.ToUint64(),
+			htlc.OutgoingIndex,
+		)
 	}
 
 	// Resolve the HTLC on the incoming channel. If it's not found, it's
@@ -345,13 +354,27 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 		return nil, err
 	}
 
+	// It's possible that after we intercepted the HTLC it was forwarded
+	// over another channel (non-strict forwarding). This is only an issue
+	// when we're using an external interceptor (when built into a solution,
+	// we'd know which channel we used).
+	if inFlight.OutgoingChannel != htlc.OutgoingChannel {
+		r.log.Debugf("Non-strict forwarding: %v used instead of %v",
+			htlc.OutgoingChannel, inFlight.OutgoingChannel)
+	}
+
 	// Update state on the outgoing channel as well, likewise if we can't
 	// find the channel we're receiving a resolution that we didn't catch
-	// on the add.
-	outgoingChannel := r.targetChannels[htlc.OutgoingChannel]
+	// on the add. We use the outgoing channel specified by the in-flight
+	// HTLC, as that's where we added the in-flight HTLC.
+	outgoingChannel := r.targetChannels[inFlight.OutgoingChannel]
 	if outgoingChannel == nil {
-		return nil, fmt.Errorf("%w: outgoing: %v",
-			ErrChannelNotFound, htlc.OutgoingChannel.ToUint64())
+		return nil, fmt.Errorf("Outgoing success=%v %w: %v(%v) -> %v(%v)",
+			htlc.Success, ErrChannelNotFound,
+			htlc.IncomingChannel.ToUint64(),
+			htlc.IncomingIndex,
+			htlc.OutgoingChannel.ToUint64(),
+			htlc.OutgoingIndex)
 	}
 	outgoingChannel.ResolveInFlight(htlc, inFlight)
 

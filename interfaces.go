@@ -274,6 +274,10 @@ type ResolvedHTLC struct {
 	// originally forwarded the incoming HTLC.
 	IncomingChannel lnwire.ShortChannelID
 
+	// OutgoingIndex is the HTLC ID on the outgoing link. Note that HTLCs
+	// that fail locally won't have this value assigned.
+	OutgoingIndex int
+
 	// OutgoingChannel is the short channel ID of the channel that
 	// forwarded the outgoing HTLC.
 	OutgoingChannel lnwire.ShortChannelID
