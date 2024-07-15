@@ -228,7 +228,7 @@ func (r *ResourceManager) getChannelReputation(
 			startValue,
 		)
 
-		r.log.Infof("Adding new channel reputation: %v with start: %v",
+		r.log.Infof("Added new channel reputation: %v with start: %v",
 			channel.ToUint64(), startValue)
 	}
 
@@ -338,10 +338,11 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	// effective fees to the incoming channel's reputation.
 	incomingChannel := r.channelReputation[htlc.IncomingChannel]
 	if incomingChannel == nil {
-		return nil, fmt.Errorf("Incoming success=%v %w: %v(%v) -> %v",
+		return nil, fmt.Errorf("Incoming success=%v %w: %v(%v) -> %v(%v)",
 			htlc.Success, ErrChannelNotFound,
 			htlc.IncomingChannel.ToUint64(),
 			htlc.IncomingIndex, htlc.OutgoingChannel.ToUint64(),
+			htlc.OutgoingIndex,
 		)
 	}
 
@@ -356,13 +357,15 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	// Update state on the outgoing channel as well, likewise if we can't
 	// find the channel we're receiving a resolution that we didn't catch
 	// on the add.
-	outgoingChannel := r.targetChannels[htlc.OutgoingChannel]
+        // NB: we use the outgoing channel from in-flight for non-strict forwarding
+	outgoingChannel := r.targetChannels[inFlight.OutgoingChannel]
 	if outgoingChannel == nil {
-		return nil, fmt.Errorf("Outgoing success=%v %w: %v(%v) -> %v",
+		r.log.Infof("Outgoing channel not found! In flight has: %v, resolution has: %v", inFlight.OutgoingChannel, htlc.OutgoingChannel)
+		return nil, fmt.Errorf("Outgoing success=%v %w: %v(%v) -> %v(%v)",
 			htlc.Success, ErrChannelNotFound,
 			htlc.IncomingChannel.ToUint64(),
 			htlc.IncomingIndex,
-			htlc.OutgoingChannel.ToUint64())
+			htlc.OutgoingChannel.ToUint64(), htlc.OutgoingIndex)
 	}
 	outgoingChannel.ResolveInFlight(htlc, inFlight)
 

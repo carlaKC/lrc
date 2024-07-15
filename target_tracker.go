@@ -103,9 +103,10 @@ func (t *targetChannelTracker) ResolveInFlight(htlc *ResolvedHTLC,
 	// Add the fees for the forward to the outgoing channel _if_ the
 	// HTLC was successful.
 	if htlc.Success {
-		t.log.Infof("HTLC successful (%v(%v) -> %v): adding fees "+
+		t.log.Infof("HTLC successful (%v(%v) -> %v(%v)): adding fees "+
 			"to channel: %v", htlc.IncomingChannel.ToUint64(),
 			htlc.IncomingIndex, htlc.OutgoingChannel.ToUint64(),
+                        htlc.OutgoingIndex,
 			inFlight.ForwardingFee())
 
 		t.revenue.add(float64(inFlight.ForwardingFee()))

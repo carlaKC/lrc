@@ -94,9 +94,9 @@ func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
 
 	inFlight, ok := r.inFlightHTLCs[htlc.IncomingIndex]
 	if !ok {
-		return nil, fmt.Errorf("%w: %v/%v -> %v", ErrResolutionNotFound,
+		return nil, fmt.Errorf("%w: %v/%v -> %v(%v)", ErrResolutionNotFound,
 			htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex,
-			htlc.OutgoingChannel.ToUint64())
+			htlc.OutgoingChannel.ToUint64(), htlc.OutgoingIndex)
 	}
 
 	delete(r.inFlightHTLCs, inFlight.IncomingIndex)
@@ -106,8 +106,10 @@ func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
 		htlc.Success,
 	)
 
-	r.log.Infof("Adding effective fees to channel: %v: %v",
-		htlc.IncomingChannel.ToUint64(), effectiveFees)
+	r.log.Infof("Adding effective fees to channel: %v(%v) -> %v(%v): %v msat",
+		htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex,
+		htlc.OutgoingChannel.ToUint64(),htlc.OutgoingIndex,
+		effectiveFees)
 
 	r.revenue.add(effectiveFees)
 
