@@ -353,10 +353,20 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 		return nil, err
 	}
 
+	// It's possible that after we intercepted the HTLC it was forwarded
+	// over another channel (non-strict forwarding). This is only an issue
+	// when we're using an external interceptor (when built into a solution,
+	// we'd know which channel we used).
+	if inFlight.OutgoingChannel != htlc.OutgoingChannel {
+		r.log.Debugf("Non-strict forwarding: %v used instead of %v",
+			htlc.OutgoingChannel, inFlight.OutgoingChannel)
+	}
+
 	// Update state on the outgoing channel as well, likewise if we can't
 	// find the channel we're receiving a resolution that we didn't catch
-	// on the add.
-	outgoingChannel := r.targetChannels[htlc.OutgoingChannel]
+	// on the add. We use the outgoing channel specified by the in-flight
+	// HTLC, as that's where we added the in-flight HTLC.
+	outgoingChannel := r.targetChannels[inFlight.OutgoingChannel]
 	if outgoingChannel == nil {
 		return nil, fmt.Errorf("Outgoing success=%v %w: %v(%v) -> %v",
 			htlc.Success, ErrChannelNotFound,
