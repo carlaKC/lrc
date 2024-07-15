@@ -304,11 +304,6 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 		incomingChannel.IncomingReputation(), htlc,
 	)
 
-	// If we have no resources for this htlc, no further action.
-	if forwardDecision.ForwardOutcome == ForwardOutcomeNoResources {
-		return &forwardDecision, nil
-	}
-
 	// If we do proceed with the forward, then add it to our incoming
 	// link, tracking our outgoing endorsement status.
 	if err := incomingChannel.AddInFlight(

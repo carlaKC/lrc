@@ -25,9 +25,14 @@ type LocalResourceManager interface {
 		error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
-	// in-flight htlc has been resolved. It returs the in flight HTLC as
-	// tracked by the manager. If the HTLC is not known, it may return
-	// nil.
+	// in-flight htlc has been resolved. It returns the in flight HTLC as
+	// tracked by the manager. It will error if the HTLC is not found.
+	//
+	// Note that this API expects resolutions to be reported for *all*
+	// HTLCs, even if the decision for ForwardHTLC was that we have no
+	// resources for the forward - this function must still be used to
+	// indicate that the HTLC has been cleared from our state (as it would
+	// have been locked in on our incoming link).
 	ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC, error)
 }
 
