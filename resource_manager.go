@@ -346,6 +346,13 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 		return nil, err
 	}
 
+	// If the htlc was not assigned any outgoing resources, then it would
+	// not have been allocated any resources on our outgoing link (it is
+	// expected to have been failed back), so we can exit here.
+	if inFlight.OutgoingDecision == ForwardOutcomeNoResources {
+		return inFlight, nil
+	}
+
 	// It's possible that after we intercepted the HTLC it was forwarded
 	// over another channel (non-strict forwarding). This is only an issue
 	// when we're using an external interceptor (when built into a solution,

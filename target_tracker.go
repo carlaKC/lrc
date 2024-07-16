@@ -1,9 +1,19 @@
 package lrc
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/lightningnetwork/lnd/clock"
+)
+
+var (
+	// ErrResolvedNoResources is returned if we try to resolve a htlc on
+	// the outgoing link that was not supposed to be allocated resources
+	// in the first place.
+	ErrResolvedNoResources = errors.New("resolved htlc on outgoing link " +
+		"that should not have been assigned resources")
 )
 
 // Compile time check that targetChannelTracker implements the targetMonitor
@@ -98,7 +108,14 @@ func (t *targetChannelTracker) AddInFlight(incomingReputation IncomingReputation
 // ResolveInFlight removes a htlc from our internal state, crediting the fees
 // to our channel if it was successful.
 func (t *targetChannelTracker) ResolveInFlight(htlc *ResolvedHTLC,
-	inFlight *InFlightHTLC) {
+	inFlight *InFlightHTLC) error {
+
+	if inFlight.OutgoingDecision == ForwardOutcomeNoResources {
+		return fmt.Errorf("%w: %v(%v) -> %v(%v)",
+			ErrResolvedNoResources, htlc.IncomingChannel.ToUint64(),
+			htlc.IncomingIndex, htlc.OutgoingChannel.ToUint64(),
+			htlc.OutgoingIndex)
+	}
 
 	// Add the fees for the forward to the outgoing channel _if_ the
 	// HTLC was successful.
@@ -116,4 +133,6 @@ func (t *targetChannelTracker) ResolveInFlight(htlc *ResolvedHTLC,
 		inFlight.OutgoingDecision == ForwardOutcomeEndorsed,
 		inFlight.OutgoingAmount,
 	)
+
+	return nil
 }

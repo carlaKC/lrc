@@ -79,9 +79,9 @@ func (m *MockTarget) AddInFlight(incomingReputation IncomingReputation,
 }
 
 func (m *MockTarget) ResolveInFlight(htlc *ResolvedHTLC,
-	inFlight *InFlightHTLC) {
+	inFlight *InFlightHTLC) error {
 
-	m.Called(htlc, inFlight)
+	return m.Called(htlc, inFlight).Error(0)
 }
 
 type MockReputation struct {

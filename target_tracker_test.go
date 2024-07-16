@@ -41,13 +41,14 @@ func TestTargetChannelTracker(t *testing.T) {
 
 	// Resolve the htlc and assert that revenue is increased.
 	mockBucket.Mock.On("removeHTLC", true, htlc0.OutgoingAmount).Return().Once()
-	tracker.ResolveInFlight(
+	err = tracker.ResolveInFlight(
 		&ResolvedHTLC{Success: true},
 		&InFlightHTLC{
 			ProposedHTLC:     htlc0,
 			OutgoingDecision: ForwardOutcomeEndorsed,
 		},
 	)
+	require.NoError(t, err)
 	require.EqualValues(t, 90, tracker.revenue.getValue())
 
 	// Add a htlc that has sufficient reputation but is not endorsed, and
@@ -65,13 +66,14 @@ func TestTargetChannelTracker(t *testing.T) {
 	// Resolve the htlc unsuccessfully and assert that revenue is
 	// unchanged.
 	mockBucket.Mock.On("removeHTLC", false, htlc1.OutgoingAmount).Return().Once()
-	tracker.ResolveInFlight(
+	err = tracker.ResolveInFlight(
 		&ResolvedHTLC{Success: false},
 		&InFlightHTLC{
 			ProposedHTLC:     htlc1,
 			OutgoingDecision: ForwardOutcomeUnendorsed,
 		},
 	)
+	require.NoError(t, err)
 	require.EqualValues(t, 90, tracker.revenue.getValue())
 
 	// Next, add a htlc that is endorsed but does not have sufficient
@@ -87,4 +89,12 @@ func TestTargetChannelTracker(t *testing.T) {
 
 	decision = tracker.AddInFlight(incoming, htlc2)
 	require.Equal(t, ForwardOutcomeNoResources, decision.ForwardOutcome)
+
+	// Test that htlcs that were not assigned resources are rejected.
+	err = tracker.ResolveInFlight(
+		&ResolvedHTLC{}, &InFlightHTLC{
+			OutgoingDecision: ForwardOutcomeNoResources,
+		},
+	)
+	require.ErrorIs(t, err, ErrResolvedNoResources)
 }

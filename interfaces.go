@@ -170,7 +170,7 @@ type targetMonitor interface {
 		htlc *ProposedHTLC) ForwardDecision
 
 	// ResolveInFlight removes a htlc from the outgoing channel.
-	ResolveInFlight(htlc *ResolvedHTLC, inFlight *InFlightHTLC)
+	ResolveInFlight(htlc *ResolvedHTLC, inFlight *InFlightHTLC) error
 }
 
 // Endorsement represents the endorsement signaling that is passed along with
