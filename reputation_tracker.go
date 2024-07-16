@@ -71,7 +71,7 @@ func (r *reputationTracker) AddInFlight(htlc *ProposedHTLC,
 	inFlightHTLC := &InFlightHTLC{
 		TimestampAdded:   r.revenue.clock.Now(),
 		ProposedHTLC:     htlc,
-		OutgoingEndorsed: outgoingEndorsed,
+		OutgoingDecision: outgoingEndorsed,
 	}
 
 	// Sanity check whether the HTLC is already present.

@@ -256,10 +256,9 @@ type InFlightHTLC struct {
 	// the incoming channel.
 	TimestampAdded time.Time
 
-	// OutgoingEndorsed indicates whether the outgoing htlc was endorsed
-	// (and thus, that it occupied protected resources on the outgoing
-	// channel).
-	OutgoingEndorsed Endorsement
+	// OutgoingDecision indicates what resource allocation was assigned to
+	// the outgoing htlc.
+	OutgoingDecision Endorsement
 
 	// ProposedHTLC contains the original details of the HTLC that was
 	// forwarded to us.

@@ -45,7 +45,7 @@ func TestTargetChannelTracker(t *testing.T) {
 		&ResolvedHTLC{Success: true},
 		&InFlightHTLC{
 			ProposedHTLC:     htlc0,
-			OutgoingEndorsed: EndorsementTrue,
+			OutgoingDecision: EndorsementTrue,
 		},
 	)
 	require.EqualValues(t, 90, tracker.revenue.getValue())
@@ -69,7 +69,7 @@ func TestTargetChannelTracker(t *testing.T) {
 		&ResolvedHTLC{Success: false},
 		&InFlightHTLC{
 			ProposedHTLC:     htlc1,
-			OutgoingEndorsed: EndorsementFalse,
+			OutgoingDecision: EndorsementFalse,
 		},
 	)
 	require.EqualValues(t, 90, tracker.revenue.getValue())

@@ -113,7 +113,7 @@ func (t *targetChannelTracker) ResolveInFlight(htlc *ResolvedHTLC,
 
 	// Clear out the resources in our resource bucket regardless of outcome.
 	t.resourceBuckets.removeHTLC(
-		inFlight.OutgoingEndorsed == EndorsementTrue,
+		inFlight.OutgoingDecision == EndorsementTrue,
 		inFlight.OutgoingAmount,
 	)
 }
