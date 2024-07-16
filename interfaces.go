@@ -149,7 +149,7 @@ type resourceBucketer interface {
 type reputationMonitor interface {
 	// AddInFlight updates the reputation monitor for an incoming link to
 	// reflect that it currently has an outstanding forwarded htlc.
-	AddInFlight(htlc *ProposedHTLC, outgoingEndorsed Endorsement) error
+	AddInFlight(htlc *ProposedHTLC, outgoingDecision ForwardOutcome) error
 
 	// ResolveInFlight updates the reputation monitor to resolve a
 	// previously in-flight htlc.
@@ -258,7 +258,7 @@ type InFlightHTLC struct {
 
 	// OutgoingDecision indicates what resource allocation was assigned to
 	// the outgoing htlc.
-	OutgoingDecision Endorsement
+	OutgoingDecision ForwardOutcome
 
 	// ProposedHTLC contains the original details of the HTLC that was
 	// forwarded to us.

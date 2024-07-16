@@ -87,10 +87,15 @@ func TestReputationTracker(t *testing.T) {
 func assertHtlcLifecycle(t *testing.T, tracker *reputationTracker, idx int,
 	incomingEndorsed, settle bool, resolveTime time.Duration) {
 
+	outgoingDecision := ForwardOutcomeUnendorsed
+	if incomingEndorsed {
+		outgoingDecision = ForwardOutcomeUnendorsed
+	}
+
 	// Note, we're just setting the outgoing endorsed to whatever our
 	// incoming endorsed is - we're not testing reputation here.
 	htlc0 := mockProposedHtlc(100, 200, idx, incomingEndorsed)
-	err := tracker.AddInFlight(htlc0, NewEndorsementSignal(incomingEndorsed))
+	err := tracker.AddInFlight(htlc0, outgoingDecision)
 	require.NoError(t, err)
 	require.Len(t, tracker.inFlightHTLCs, 1)
 
@@ -108,11 +113,11 @@ func TestReputationTrackerErrs(t *testing.T) {
 	)
 
 	htlc0 := mockProposedHtlc(100, 200, 0, true)
-	err := tracker.AddInFlight(htlc0, NewEndorsementSignal(true))
+	err := tracker.AddInFlight(htlc0, ForwardOutcomeEndorsed)
 	require.NoError(t, err)
 
 	// Assert that we error on duplicate htlcs.
-	err = tracker.AddInFlight(htlc0, NewEndorsementSignal(true))
+	err = tracker.AddInFlight(htlc0, ForwardOutcomeEndorsed)
 	require.ErrorIs(t, err, ErrDuplicateIndex)
 
 	htlc1 := mockProposedHtlc(100, 200, 1, true)
