@@ -149,7 +149,7 @@ type resourceBucketer interface {
 type reputationMonitor interface {
 	// AddInFlight updates the reputation monitor for an incoming link to
 	// reflect that it currently has an outstanding forwarded htlc.
-	AddInFlight(htlc *ProposedHTLC, outgoingEndorsed Endorsement) error
+	AddInFlight(htlc *ProposedHTLC, outgoingDecision ForwardOutcome) error
 
 	// ResolveInFlight updates the reputation monitor to resolve a
 	// previously in-flight htlc.
@@ -170,7 +170,7 @@ type targetMonitor interface {
 		htlc *ProposedHTLC) ForwardDecision
 
 	// ResolveInFlight removes a htlc from the outgoing channel.
-	ResolveInFlight(htlc *ResolvedHTLC, inFlight *InFlightHTLC)
+	ResolveInFlight(htlc *ResolvedHTLC, inFlight *InFlightHTLC) error
 }
 
 // Endorsement represents the endorsement signaling that is passed along with
@@ -256,10 +256,9 @@ type InFlightHTLC struct {
 	// the incoming channel.
 	TimestampAdded time.Time
 
-	// OutgoingEndorsed indicates whether the outgoing htlc was endorsed
-	// (and thus, that it occupied protected resources on the outgoing
-	// channel).
-	OutgoingEndorsed Endorsement
+	// OutgoingDecision indicates what resource allocation was assigned to
+	// the outgoing htlc.
+	OutgoingDecision ForwardOutcome
 
 	// ProposedHTLC contains the original details of the HTLC that was
 	// forwarded to us.

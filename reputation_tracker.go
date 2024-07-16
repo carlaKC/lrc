@@ -66,12 +66,12 @@ func (r *reputationTracker) IncomingReputation() IncomingReputation {
 // AddInFlight updates the outgoing channel's view to include a new in flight
 // HTLC.
 func (r *reputationTracker) AddInFlight(htlc *ProposedHTLC,
-	outgoingEndorsed Endorsement) error {
+	outgoingDecision ForwardOutcome) error {
 
 	inFlightHTLC := &InFlightHTLC{
 		TimestampAdded:   r.revenue.clock.Now(),
 		ProposedHTLC:     htlc,
-		OutgoingEndorsed: outgoingEndorsed,
+		OutgoingDecision: outgoingDecision,
 	}
 
 	// Sanity check whether the HTLC is already present.

@@ -79,9 +79,9 @@ func (m *MockTarget) AddInFlight(incomingReputation IncomingReputation,
 }
 
 func (m *MockTarget) ResolveInFlight(htlc *ResolvedHTLC,
-	inFlight *InFlightHTLC) {
+	inFlight *InFlightHTLC) error {
 
-	m.Called(htlc, inFlight)
+	return m.Called(htlc, inFlight).Error(0)
 }
 
 type MockReputation struct {
@@ -89,9 +89,9 @@ type MockReputation struct {
 }
 
 func (m *MockReputation) AddInFlight(htlc *ProposedHTLC,
-	outgoingEndorsed Endorsement) error {
+	outgoingDecision ForwardOutcome) error {
 
-	args := m.Called(htlc, outgoingEndorsed)
+	args := m.Called(htlc, outgoingDecision)
 
 	return args.Error(0)
 }

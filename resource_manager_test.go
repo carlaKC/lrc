@@ -117,7 +117,7 @@ func TestResourceManager(t *testing.T) {
 	chan200Outgoing.On("AddInFlight", incomingRep, htlc1).Once().Return(
 		ForwardDecision{ForwardOutcome: ForwardOutcomeUnendorsed},
 	)
-	chan100Incoming.On("AddInFlight", htlc1, EndorsementFalse).Once().Return(nil)
+	chan100Incoming.On("AddInFlight", htlc1, ForwardOutcomeUnendorsed).Once().Return(nil)
 
 	f, err := mgr.ForwardHTLC(htlc1, chanOutInfo)
 	require.NoError(t, err)
@@ -130,6 +130,7 @@ func TestResourceManager(t *testing.T) {
 	chan200Outgoing.On("AddInFlight", incomingRep, htlc2).Once().Return(
 		ForwardDecision{ForwardOutcome: ForwardOutcomeNoResources},
 	)
+	chan100Incoming.On("AddInFlight", htlc2, ForwardOutcomeNoResources).Once().Return(nil)
 
 	f, err = mgr.ForwardHTLC(htlc2, chanOutInfo)
 	require.NoError(t, err)
@@ -144,16 +145,33 @@ func TestResourceManager(t *testing.T) {
 	require.ErrorIs(t, err, ErrChannelNotFound)
 
 	// And the case where the incoming channel is known to us, but the
-	// outgoing channel is not. We'll call our resolution on the incoming
-	// channel then fail on the outgoing channel (note that a non-mocked
-	// incoming channel would fail on ResolveInFlight, so we're really
-	// just testing coverage here).
+	// outgoing channel is not (and the htlc _was_ supposedly forwarded).
+	// We'll call our resolution on the incoming channel then fail on the
+	// outgoing channel (note that a non-mocked incoming channel would fail
+	// on ResolveInFlight, so we're really just testing coverage here).
 	htlc4 := mockProposedHtlc(100, 500, 1, false)
 	htlc4res := resolutionForProposed(htlc4, false, testTime)
 	chan100Incoming.On("ResolveInFlight", htlc4res).Once().Return(
-		&InFlightHTLC{}, nil,
+		&InFlightHTLC{
+			OutgoingDecision: ForwardOutcomeEndorsed,
+			ProposedHTLC:     &ProposedHTLC{},
+		}, nil,
 	)
 
 	_, err = mgr.ResolveHTLC(htlc4res)
 	require.ErrorIs(t, err, ErrChannelNotFound)
+
+	// Finally, test resolving of a htlc that was only added on the
+	// incoming link, and not the outgoing link due to lack of resources.
+	htlc5 := mockProposedHtlc(100, 500, 1, false)
+	htlc5res := resolutionForProposed(htlc5, false, testTime)
+	chan100Incoming.On("ResolveInFlight", htlc5res).Once().Return(
+		&InFlightHTLC{
+			OutgoingDecision: ForwardOutcomeNoResources,
+			ProposedHTLC:     &ProposedHTLC{},
+		}, nil,
+	)
+
+	_, err = mgr.ResolveHTLC(htlc5res)
+	require.NoError(t, err)
 }
