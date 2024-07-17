@@ -97,3 +97,9 @@ func (d *decayingAverage) addAtTime(value float64, ts time.Time) error {
 
 	return nil
 }
+
+// DebugValue returns the value of the decaying average without updating its
+// timestamp. This should *not* be used outside of debugging contexts.
+func (d *decayingAverage) DebugValue() float64 {
+	return d.value
+}

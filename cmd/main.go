@@ -4,7 +4,9 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/carlakc/lrc"
@@ -48,9 +50,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	for alias, channels := range network {
-		fmt.Printf("Node: %v has %v incoming / %v outgoing\n",
-			alias, len(channels.Incoming), len(channels.Outgoing))
+	err = writeNetworkData(
+		os.Args[1], getNetworkData(network),
+	)
+	if err != nil {
+		fmt.Println("Write network data: ", err)
+		os.Exit(1)
 	}
 }
 
@@ -129,4 +134,95 @@ func readCSV(reader *csv.Reader) ([]*lrc.NetworkForward, error) {
 	}
 
 	return forwardedHTLCs, nil
+}
+
+type networkReputation struct {
+	node           string
+	chanIn         uint64
+	chanOut        uint64
+	reputation     float64
+	revenue        float64
+	goodReputation bool
+}
+
+func getNetworkData(data map[string]*lrc.ChannelBootstrap) []networkReputation {
+	var records []networkReputation
+	for alias, channels := range data {
+		var (
+			goodReputation int
+			pairs          int
+		)
+
+		// TODO: all of these value will be at different timestamps
+		// because the decaying average was last updated at different
+		// times. Even if we update this, our clock will always be
+		// different, so we'll end up with different values per-pair.
+		for chanIn, reputation := range channels.Incoming {
+			reputation := reputation.DebugValue()
+
+			for chanOut, revenue := range channels.Outgoing {
+                                if chanOut == chanIn{
+                                        continue
+                                }
+
+				revenue := revenue.DebugValue()
+
+				record := networkReputation{
+					node:           alias,
+					chanIn:         chanIn.ToUint64(),
+					chanOut:        chanOut.ToUint64(),
+					reputation:     reputation,
+					revenue:        revenue,
+					goodReputation: reputation > revenue,
+				}
+
+				pairs++
+				if record.goodReputation {
+					goodReputation++
+				}
+				records = append(records, record)
+			}
+		}
+
+		fmt.Printf("Node: %v has %v/%v good reputation pairs\n",
+			alias, goodReputation, pairs)
+	}
+
+	return records
+}
+
+func writeNetworkData(path string, records []networkReputation) error {
+	baseName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	filePath := baseName + "_reputations.csv"
+
+	// Create and open the CSV file
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %v", err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write the header row
+	header := []string{"node", "chan_in", "chan_out", "reputation", "revenue", "has_rep"}
+	if err := writer.Write(header); err != nil {
+		return fmt.Errorf("failed to write header: %v", err)
+	}
+	for _, record := range records {
+		row := []string{
+			record.node,
+			strconv.FormatUint(record.chanIn, 10),
+			strconv.FormatUint(record.chanOut, 10),
+			fmt.Sprintf("%f", record.reputation),
+			fmt.Sprintf("%f", record.revenue),
+			strconv.FormatBool(record.goodReputation),
+		}
+		if err := writer.Write(row); err != nil {
+			return fmt.Errorf("failed to write record: %v", err)
+		}
+	}
+
+	return nil
 }
