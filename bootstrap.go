@@ -153,3 +153,63 @@ func BootstrapRevenue(scid lnwire.ShortChannelID, params ManagerParams,
 		LastUpdate: revenueAvg.lastUpdate,
 	}, nil
 }
+
+type NetworkForward struct {
+	NodeAlias string
+	*ForwardedHTLC
+}
+
+type ChannelBootstrap struct {
+	Incoming map[lnwire.ShortChannelID]*decayingAverage
+	Outgoing map[lnwire.ShortChannelID]*decayingAverage
+}
+
+func newChannels() *ChannelBootstrap {
+	return &ChannelBootstrap{
+		Incoming: make(map[lnwire.ShortChannelID]*decayingAverage),
+		Outgoing: make(map[lnwire.ShortChannelID]*decayingAverage),
+	}
+}
+
+// BootstrapNetwork reads a list of forwards belonging to a network of nodes
+// and calculates pairwise reputation for all channels in the network.
+func BootstrapNetwork(params ManagerParams, history []*NetworkForward,
+	clock clock.Clock) (map[string]*ChannelBootstrap, error) {
+
+	if len(history) == 0 {
+		return nil, nil
+	}
+
+	nodes := make(map[string]*ChannelBootstrap)
+
+	for _, h := range history {
+		var err error
+
+		channels, ok := nodes[h.NodeAlias]
+		if !ok {
+			channels = newChannels()
+		}
+
+		incoming, _ := channels.Incoming[h.IncomingChannel]
+		channels.Incoming[h.IncomingChannel], err = addReputationHtlc(
+			clock, h.IncomingChannel, h.ForwardedHTLC, params,
+			incoming,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		outgoing, _ := channels.Outgoing[h.OutgoingChannel]
+		channels.Outgoing[h.OutgoingChannel], err = addRevenueHtlc(
+			clock, h.OutgoingChannel, params, h.ForwardedHTLC,
+			outgoing,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		nodes[h.NodeAlias] = channels
+	}
+
+	return nodes, nil
+}
