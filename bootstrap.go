@@ -8,6 +8,44 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
+func addReputationHtlc(clock clock.Clock, scid lnwire.ShortChannelID,
+	htlc *ForwardedHTLC, params ManagerParams,
+	reputationAvg *decayingAverage) (*decayingAverage, error) {
+
+	// Sanity check that we only have forwards where we're the
+	// incoming channel.
+	if htlc.InFlightHTLC.IncomingChannel != scid {
+		return nil, fmt.Errorf("reputation history for: "+
+			"%v contains forward that does not belong "+
+			"to channel (%v -> %v)", scid,
+			htlc.InFlightHTLC.IncomingChannel,
+			htlc.Resolution.OutgoingChannel)
+	}
+
+	effectiveFees := effectiveFees(
+		params.ResolutionPeriod,
+		htlc.Resolution.TimestampSettled, &htlc.InFlightHTLC,
+		htlc.Resolution.Success,
+	)
+
+	if reputationAvg == nil {
+		reputationAvg = newDecayingAverage(
+			clock, params.reputationWindow(),
+			&DecayingAverageStart{
+				htlc.Resolution.TimestampSettled,
+				effectiveFees,
+			},
+		)
+	} else {
+		reputationAvg.addAtTime(
+			effectiveFees,
+			htlc.Resolution.TimestampSettled,
+		)
+	}
+
+	return reputationAvg, nil
+}
+
 // BootstrapReputation processes a set of forwards where we are the incoming
 // link and returns a start value for our reputation decaying average (or nil
 // if there is no history).
@@ -31,37 +69,13 @@ func BootstrapReputation(scid lnwire.ShortChannelID, params ManagerParams,
 	var reputationAvg *decayingAverage
 
 	for _, h := range history {
-		// Sanity check that we only have forwards where we're the
-		// incoming channel.
-		if h.InFlightHTLC.IncomingChannel != scid {
-			return nil, fmt.Errorf("reputation history for: "+
-				"%v contains forward that does not belong "+
-				"to channel (%v -> %v)", scid,
-				h.InFlightHTLC.IncomingChannel,
-				h.Resolution.OutgoingChannel)
-		}
-
-		effectiveFees := effectiveFees(
-			params.ResolutionPeriod,
-			h.Resolution.TimestampSettled, &h.InFlightHTLC,
-			h.Resolution.Success,
+		var err error
+		reputationAvg, err = addReputationHtlc(
+			clock, scid, h, params, reputationAvg,
 		)
-
-		if reputationAvg == nil {
-			reputationAvg = newDecayingAverage(
-				clock, params.reputationWindow(),
-				&DecayingAverageStart{
-					h.Resolution.TimestampSettled,
-					effectiveFees,
-				},
-			)
-		} else {
-			reputationAvg.addAtTime(
-				effectiveFees,
-				h.Resolution.TimestampSettled,
-			)
+		if err != nil {
+			return nil, err
 		}
-
 	}
 
 	return &DecayingAverageStart{
