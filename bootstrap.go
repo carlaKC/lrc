@@ -8,16 +8,6 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
-type ChannelBootstrap struct {
-	// Reputation is the historical reputation that a channel accrued as
-	// the incoming link in forwards.
-	Reputation *DecayingAverageStart
-
-	// Revenue is the historical revenue that the channel accrued as the
-	// outgoing link in forwards.
-	Revenue *DecayingAverageStart
-}
-
 // BootstrapReputation processes a set of forwards where we are the incoming
 // link and returns a start value for our reputation decaying average (or nil
 // if there is no history).
