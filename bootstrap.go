@@ -84,6 +84,38 @@ func BootstrapReputation(scid lnwire.ShortChannelID, params ManagerParams,
 	}, nil
 }
 
+func addRevenueHtlc(clock clock.Clock, scid lnwire.ShortChannelID,
+	params ManagerParams, htlc *ForwardedHTLC,
+	revenueAvg *decayingAverage) (*decayingAverage, error) {
+
+	if htlc.InFlightHTLC.OutgoingChannel != scid &&
+		htlc.InFlightHTLC.IncomingChannel != scid {
+
+		return nil, fmt.Errorf("revenue history for: "+
+			"%v contains forward that does not belong "+
+			"to channel (%v -> %v)", scid,
+			htlc.InFlightHTLC.IncomingChannel,
+			htlc.Resolution.OutgoingChannel)
+	}
+
+	if revenueAvg == nil {
+		revenueAvg = newDecayingAverage(
+			clock, params.RevenueWindow,
+			&DecayingAverageStart{
+				htlc.Resolution.TimestampSettled,
+				float64(htlc.ForwardingFee()),
+			},
+		)
+	} else {
+		revenueAvg.addAtTime(
+			float64(htlc.ForwardingFee()),
+			htlc.Resolution.TimestampSettled,
+		)
+	}
+
+	return revenueAvg, nil
+}
+
 // BootstrapRevenue processes a set of forwards where we are the outgoing link
 // and returns a start value for our revenue decaying average (or nil if there
 // is no history).
@@ -107,29 +139,12 @@ func BootstrapRevenue(scid lnwire.ShortChannelID, params ManagerParams,
 	var revenueAvg *decayingAverage
 
 	for _, h := range history {
-		if h.InFlightHTLC.OutgoingChannel != scid &&
-			h.InFlightHTLC.IncomingChannel != scid {
-
-			return nil, fmt.Errorf("revenue history for: "+
-				"%v contains forward that does not belong "+
-				"to channel (%v -> %v)", scid,
-				h.InFlightHTLC.IncomingChannel,
-				h.Resolution.OutgoingChannel)
-		}
-
-		if revenueAvg == nil {
-			revenueAvg = newDecayingAverage(
-				clock, params.RevenueWindow,
-				&DecayingAverageStart{
-					h.Resolution.TimestampSettled,
-					float64(h.ForwardingFee()),
-				},
-			)
-		} else {
-			revenueAvg.addAtTime(
-				float64(h.ForwardingFee()),
-				h.Resolution.TimestampSettled,
-			)
+		var err error
+		revenueAvg, err = addRevenueHtlc(
+			clock, scid, params, h, revenueAvg,
+		)
+		if err != nil {
+			return nil, err
 		}
 	}
 
