@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,11 +20,16 @@ import (
 func main() {
 	// Check if the file path argument is provided
 	if len(os.Args) < 2 {
-		fmt.Println("Provide path to data as argument")
+		fmt.Println("Please provide basedir containing data.csv and .json of graph")
 		return
 	}
 
-	file, err := os.Open(os.Args[1])
+	// First, pull out the generated data for the graph and get all
+	// existing reputation scores for it.
+	baseDir := os.Args[1]
+	dataFile := path.Join(baseDir, "data.csv")
+
+	file, err := os.Open(dataFile)
 	if err != nil {
 		fmt.Println("Error opening file:", err)
 		return
@@ -50,9 +58,44 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = writeNetworkData(
-		os.Args[1], getNetworkData(network),
-	)
+	// Next, get the full graph file and collect channels for each node.
+	// It's possible that some channels don't have any activity at all,
+	// and thus no reputation, and we want to include them in our count of
+	// reputation pairs.
+	graphFile := path.Join(baseDir, "simln.json")
+	graphJson, err := os.Open(graphFile)
+	if err != nil {
+		fmt.Println("Error opening graph:", err)
+		return
+	}
+	defer graphJson.Close()
+
+	fileContents, err := io.ReadAll(graphJson)
+	if err != nil {
+		fmt.Println("Error reading file:", graphFile, err)
+		return
+	}
+
+	var graphData SimNetwork
+	err = json.Unmarshal(fileContents, &graphData)
+	if err != nil {
+		fmt.Println("Error decoding JSON:", graphFile, err)
+		return
+	}
+
+	edges, err := getNetworkEdges(graphData)
+	if err != nil {
+		fmt.Println("Error getting edge data: ", err)
+		os.Exit(1)
+	}
+
+	networkData, err := getNetworkData(network, edges)
+	if err != nil {
+		fmt.Println("Error getting netowrk data: ", err)
+		os.Exit(1)
+	}
+
+	err = writeNetworkData(os.Args[1], networkData)
 	if err != nil {
 		fmt.Println("Write network data: ", err)
 		os.Exit(1)
@@ -145,35 +188,70 @@ type networkReputation struct {
 	goodReputation bool
 }
 
-func getNetworkData(data map[string]*lrc.ChannelBootstrap) []networkReputation {
-	var records []networkReputation
+func getNetworkData(data map[string]*lrc.ChannelBootstrap,
+	graph map[string]map[uint64]struct{}) ([]networkReputation, error) {
+
+	var (
+		records                  []networkReputation
+		goodRepPairs, totalPairs int
+	)
+
 	for alias, channels := range data {
 		var (
 			goodReputation int
 			pairs          int
 		)
 
+		allChannels, ok := graph[alias]
+		if !ok {
+			return nil, fmt.Errorf("Node: %v not found in graph",
+				alias)
+		}
+
+		// Add any channels for the node that have no bootstrapped
+		// activity, and thus no reputation or revenue.
+		for scid, _ := range allChannels {
+			scid := lnwire.NewShortChanIDFromInt(scid)
+			_, ok := channels.Incoming[scid]
+			if !ok {
+				channels.Incoming[scid] = nil
+			}
+
+			_, ok = channels.Outgoing[scid]
+			if !ok {
+				channels.Outgoing[scid] = nil
+			}
+		}
+
 		// TODO: all of these value will be at different timestamps
 		// because the decaying average was last updated at different
 		// times. Even if we update this, our clock will always be
 		// different, so we'll end up with different values per-pair.
 		for chanIn, reputation := range channels.Incoming {
-			reputation := reputation.DebugValue()
+			// Allow nil entires for the case where we have no
+			// reputation tracked.
+			incomingReputation := 0.0
+			if reputation != nil {
+				incomingReputation = reputation.DebugValue()
+			}
 
 			for chanOut, revenue := range channels.Outgoing {
-                                if chanOut == chanIn{
-                                        continue
-                                }
+				if chanOut == chanIn {
+					continue
+				}
 
-				revenue := revenue.DebugValue()
+				outgoingRevenue := 0.0
+				if revenue != nil {
+					outgoingRevenue = revenue.DebugValue()
+				}
 
 				record := networkReputation{
 					node:           alias,
 					chanIn:         chanIn.ToUint64(),
 					chanOut:        chanOut.ToUint64(),
-					reputation:     reputation,
-					revenue:        revenue,
-					goodReputation: reputation > revenue,
+					reputation:     incomingReputation,
+					revenue:        outgoingRevenue,
+					goodReputation: incomingReputation > outgoingRevenue,
 				}
 
 				pairs++
@@ -184,11 +262,16 @@ func getNetworkData(data map[string]*lrc.ChannelBootstrap) []networkReputation {
 			}
 		}
 
+		goodRepPairs += goodReputation
+		totalPairs += pairs
 		fmt.Printf("Node: %v has %v/%v good reputation pairs\n",
 			alias, goodReputation, pairs)
 	}
 
-	return records
+	fmt.Printf("Total pairs: %v, with good reputation: %v (%v %%)\n", 
+        totalPairs, goodRepPairs, (goodRepPairs*100/totalPairs))
+
+	return records, nil
 }
 
 func writeNetworkData(path string, records []networkReputation) error {
@@ -225,4 +308,46 @@ func writeNetworkData(path string, records []networkReputation) error {
 	}
 
 	return nil
+}
+
+type Edge struct {
+	ChannelID uint64 `json:"channel_id"`
+	Node1     Node   `json:"node_1"`
+	Node2     Node   `json:"node_2"`
+}
+
+type Node struct {
+	Alias string `json:"alias"`
+}
+
+type SimNetwork struct {
+	Edges []Edge `json:"sim_network"`
+}
+
+func getNetworkEdges(graphData SimNetwork) (map[string]map[uint64]struct{},
+	error) {
+
+	network := make(map[string]map[uint64]struct{})
+	addEdge := func(alias string, channelID uint64) error {
+		channels, ok := network[alias]
+		if !ok {
+			channels = make(map[uint64]struct{})
+			network[alias] = channels
+		}
+
+		channels[channelID] = struct{}{}
+		return nil
+	}
+
+	for _, edge := range graphData.Edges {
+		if err := addEdge(edge.Node1.Alias, edge.ChannelID); err != nil {
+			return nil, err
+		}
+
+		if err := addEdge(edge.Node2.Alias, edge.ChannelID); err != nil {
+			return nil, err
+		}
+	}
+
+	return network, nil
 }
