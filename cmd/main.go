@@ -46,7 +46,7 @@ func main() {
 
 	network, err := lrc.BootstrapNetwork(
 		lrc.ManagerParams{
-			RevenueWindow:        time.Hour,
+			RevenueWindow:        time.Hour * 24 * 7 * 4,
 			ReputationMultiplier: 12,
 			ProtectedPercentage:  50,
 			ResolutionPeriod:     time.Second * 90,
@@ -268,8 +268,8 @@ func getNetworkData(data map[string]*lrc.ChannelBootstrap,
 			alias, goodReputation, pairs)
 	}
 
-	fmt.Printf("Total pairs: %v, with good reputation: %v (%v %%)\n", 
-        totalPairs, goodRepPairs, (goodRepPairs*100/totalPairs))
+	fmt.Printf("Total pairs: %v, with good reputation: %v (%v %%)\n",
+		totalPairs, goodRepPairs, (goodRepPairs * 100 / totalPairs))
 
 	return records, nil
 }
