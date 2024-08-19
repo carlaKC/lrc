@@ -86,9 +86,15 @@ func TestResourceManager(t *testing.T) {
 		InFlightLiquidity: 100000,
 	}
 
+	// Set to a different value so that the mock can distinguish.
+	chanInInfo := &ChannelInfo{
+		InFlightHTLC:      300,
+		InFlightLiquidity: 100000,
+	}
 	// Start with a HTLC that overflows.
+
 	htlc0.OutgoingAmount = MaxMilliSatoshi + 1
-	_, err := mgr.ForwardHTLC(htlc0, chanOutInfo)
+	_, err := mgr.ForwardHTLC(htlc0, chanInInfo, chanOutInfo)
 	require.ErrorIs(t, err, ErrAmtOverflow)
 
 	// Start from scratch, when trackers need to be made for both of our
@@ -96,30 +102,47 @@ func TestResourceManager(t *testing.T) {
 	chan100Incoming := &MockReputation{}
 	defer chan100Incoming.AssertExpectations(t)
 
+	chan200Incoming := &MockReputation{}
+	defer chan200Incoming.AssertExpectations(t)
+
 	chan200Outgoing := &MockRevenue{}
+	chan200Outgoing.On("Revenue").Return(0.0)
 	defer chan200Outgoing.AssertExpectations(t)
 
+	chan100Outgoing := &MockRevenue{}
+	chan100Outgoing.On("Revenue").Return(0.0)
+	defer chan100Outgoing.AssertExpectations(t)
+
+	// Mock for setting up new incoming and outgoing channels, allow
+	// multiple calls for each direction.
 	deps.On("newReputationMonitor", mock.Anything).Once().Return(
 		chan100Incoming,
 	)
-	deps.On("newRevenueMonitor", mock.Anything, chanOutInfo).Once().Return(
+	deps.On("newReputationMonitor", mock.Anything).Once().Return(
+		chan200Incoming,
+	)
+
+	deps.On("newRevenueMonitor", mock.Anything, chanOutInfo).Return(
 		chan200Outgoing, nil,
+	)
+	deps.On("newRevenueMonitor", mock.Anything, chanInInfo).Return(
+		chan100Outgoing, nil,
 	)
 
 	// We don't actually use our incoming reputation info anywhere, so
 	// we can just set it to return a single value every time.
-	incomingRep := IncomingReputation{}
-	chan100Incoming.On("IncomingReputation").Return(incomingRep)
+	incomingRep := Reputation{}
+	chan100Incoming.On("Reputation", mock.Anything).Return(incomingRep)
+	chan200Incoming.On("Reputation", mock.Anything).Return(incomingRep)
 
 	// Add a HTLC which is assessed to be able to forward, but not
 	// endorsed - assert that it's forwarded without endorsement.
 	htlc1 := mockProposedHtlc(100, 200, 0, true)
-	chan200Outgoing.On("AddInFlight", incomingRep, htlc1).Once().Return(
-		ForwardDecision{ForwardOutcome: ForwardOutcomeUnendorsed},
-	)
+	chan200Outgoing.On("AddInFlight", htlc1, false).Once().Return(
+		ForwardOutcomeUnendorsed)
 	chan100Incoming.On("AddIncomingInFlight", htlc1, ForwardOutcomeUnendorsed).Once().Return(nil)
 
-	f, err := mgr.ForwardHTLC(htlc1, chanOutInfo)
+	f, err := mgr.ForwardHTLC(htlc1, chanInInfo, chanOutInfo)
 	require.NoError(t, err)
 	require.Equal(t, ForwardOutcomeUnendorsed, f.ForwardOutcome)
 
@@ -127,12 +150,11 @@ func TestResourceManager(t *testing.T) {
 	// and assert that it is not added to the incoming channel's in-flight.
 	// Using the same channels, do we don't need any setup assertions.
 	htlc2 := mockProposedHtlc(100, 200, 0, true)
-	chan200Outgoing.On("AddInFlight", incomingRep, htlc2).Once().Return(
-		ForwardDecision{ForwardOutcome: ForwardOutcomeNoResources},
-	)
+	chan200Outgoing.On("AddInFlight", htlc2, false).Once().Return(
+		ForwardOutcomeNoResources)
 	chan100Incoming.On("AddIncomingInFlight", htlc2, ForwardOutcomeNoResources).Once().Return(nil)
 
-	f, err = mgr.ForwardHTLC(htlc2, chanOutInfo)
+	f, err = mgr.ForwardHTLC(htlc2, chanInInfo, chanOutInfo)
 	require.NoError(t, err)
 	require.Equal(t, ForwardOutcomeNoResources, f.ForwardOutcome)
 

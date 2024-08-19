@@ -100,7 +100,7 @@ func assertHtlcLifecycle(t *testing.T, tracker *reputationTracker, idx int,
 	require.Len(t, tracker.incomingInFlight, 1)
 
 	res0 := resolutionForProposed(htlc0, settle, testTime.Add(resolveTime))
-	_, err = tracker.ResolveInFlight(res0)
+	_, err = tracker.ResolveIncoming(res0)
 	require.NoError(t, err)
 	require.Len(t, tracker.incomingInFlight, 0)
 }
@@ -122,7 +122,7 @@ func TestReputationTrackerErrs(t *testing.T) {
 
 	htlc1 := mockProposedHtlc(100, 200, 1, true)
 	res1 := resolutionForProposed(htlc1, true, testTime)
-	_, err = tracker.ResolveInFlight(res1)
+	_, err = tracker.ResolveIncoming(res1)
 	require.ErrorIs(t, err, ErrResolutionNotFound)
 }
 
@@ -229,7 +229,7 @@ func TestInFlightHTLCs(t *testing.T) {
 	err := tracker.AddIncomingInFlight(htlc0, ForwardOutcomeEndorsed)
 	require.NoError(t, err)
 
-	r0 := tracker.IncomingReputation()
+	r0 := tracker.Reputation(true)
 	require.NotZero(t, r0.InFlightRisk)
 
 	// An unendorsed htlc should not change the in-flight risk.
@@ -237,15 +237,15 @@ func TestInFlightHTLCs(t *testing.T) {
 	err = tracker.AddIncomingInFlight(htlc1, ForwardOutcomeUnendorsed)
 	require.NoError(t, err)
 
-	r1 := tracker.IncomingReputation()
+	r1 := tracker.Reputation(true)
 	require.Equal(t, r0.InFlightRisk, r1.InFlightRisk)
 
 	// Once the endorsed htlc is resolved, there is zero in flight risk
 	// even though there's still one unendorsed htlc.
 	res0 := resolutionForProposed(htlc0, true, testTime.Add(time.Second))
-	_, err = tracker.ResolveInFlight(res0)
+	_, err = tracker.ResolveIncoming(res0)
 	require.NoError(t, err)
 
-	r0 = tracker.IncomingReputation()
+	r0 = tracker.Reputation(true)
 	require.Zero(t, r0.InFlightRisk)
 }

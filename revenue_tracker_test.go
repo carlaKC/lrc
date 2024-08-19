@@ -24,7 +24,7 @@ func TestRevenueTracker(t *testing.T) {
 	tracker.resourceBuckets = mockBucket
 
 	// Add an in-flight htlc that's endorsed with sufficient reputation.
-	incoming := IncomingReputation{
+	incoming := Reputation{
 		IncomingRevenue: 1000,
 		InFlightRisk:    50,
 	}
@@ -35,8 +35,8 @@ func TestRevenueTracker(t *testing.T) {
 	}
 	mockBucket.Mock.On("addHTLC", true, htlc0.OutgoingAmount).Return(true).Once()
 
-	decision := tracker.AddInFlight(incoming, htlc0)
-	require.Equal(t, ForwardOutcomeEndorsed, decision.ForwardOutcome)
+	outcome := tracker.AddInFlight(htlc0, true)
+	require.Equal(t, ForwardOutcomeEndorsed, outcome)
 
 	// Resolve the htlc and assert that revenue is increased.
 	mockBucket.Mock.On("removeHTLC", true, htlc0.OutgoingAmount).Return().Once()
@@ -59,8 +59,8 @@ func TestRevenueTracker(t *testing.T) {
 	}
 	mockBucket.Mock.On("addHTLC", false, htlc1.OutgoingAmount).Return(true).Once()
 
-	decision = tracker.AddInFlight(incoming, htlc1)
-	require.Equal(t, ForwardOutcomeUnendorsed, decision.ForwardOutcome)
+	outcome = tracker.AddInFlight(htlc1, true)
+	require.Equal(t, ForwardOutcomeUnendorsed, outcome)
 
 	// Resolve the htlc unsuccessfully and assert that revenue is
 	// unchanged.
@@ -86,8 +86,8 @@ func TestRevenueTracker(t *testing.T) {
 	}
 	mockBucket.Mock.On("addHTLC", false, htlc2.OutgoingAmount).Return(false).Once()
 
-	decision = tracker.AddInFlight(incoming, htlc2)
-	require.Equal(t, ForwardOutcomeNoResources, decision.ForwardOutcome)
+	outcome = tracker.AddInFlight(htlc2, false)
+	require.Equal(t, ForwardOutcomeNoResources, outcome)
 
 	// Test that htlcs that were not assigned resources are rejected.
 	err = tracker.ResolveInFlight(

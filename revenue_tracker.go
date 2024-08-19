@@ -65,44 +65,32 @@ func newRevenueTracker(clock clock.Clock, params ManagerParams,
 // reputation of the incoming link. This function will return a forwarding
 // decision with the details of the reputation decision and the action that
 // was taken for this HTLC considering our resources and its endorsement.
-func (t *revenueTracker) AddInFlight(incomingReputation IncomingReputation,
-	htlc *ProposedHTLC) ForwardDecision {
+func (t *revenueTracker) AddInFlight(htlc *ProposedHTLC,
+	sufficientReputation bool) ForwardOutcome {
 
-	// First, assess reputation of the incoming link to decide whether
-	// the HTLC should be granted access to protected slots.
-	reputationCheck := ReputationCheck{
-		IncomingReputation: incomingReputation,
-		OutgoingRevenue:    t.revenue.getValue(),
-		HTLCRisk: outstandingRisk(
-			t.blockTime, htlc, t.resolutionPeriod,
-		),
-	}
+	htlcEndorsed := htlc.IncomingEndorsed == EndorsementTrue
+	htlcProtected := sufficientReputation && htlcEndorsed
 
-	htlcProtected := reputationCheck.SufficientReputation() &&
-		htlc.IncomingEndorsed == EndorsementTrue
-
-		// Try to add the htlc to our bucket, if we can't accommodate it
-		// return early.
+	// Try to add the htlc to our bucket, if we can't accommodate it
+	// return early.
 	canForward := t.resourceBuckets.addHTLC(
 		htlcProtected, htlc.OutgoingAmount,
 	)
 
-	var outcome ForwardOutcome
 	switch {
 	case !canForward:
-		outcome = ForwardOutcomeNoResources
+		return ForwardOutcomeNoResources
 
 	case htlcProtected:
-		outcome = ForwardOutcomeEndorsed
+		return ForwardOutcomeEndorsed
 
 	default:
-		outcome = ForwardOutcomeUnendorsed
+		return ForwardOutcomeUnendorsed
 	}
+}
 
-	return ForwardDecision{
-		ReputationCheck: reputationCheck,
-		ForwardOutcome:  outcome,
-	}
+func (t *revenueTracker) Revenue() float64 {
+	return t.revenue.getValue()
 }
 
 // ResolveInFlight removes a htlc from our internal state, crediting the fees
@@ -110,7 +98,8 @@ func (t *revenueTracker) AddInFlight(incomingReputation IncomingReputation,
 func (t *revenueTracker) ResolveInFlight(htlc *ResolvedHTLC,
 	inFlight *InFlightHTLC) error {
 
-	if inFlight.OutgoingDecision == ForwardOutcomeNoResources {
+	if inFlight.OutgoingDecision == ForwardOutcomeNoResources ||
+		inFlight.OutgoingDecision == ForwardOutcomeOutgoingUnkonwn {
 		return fmt.Errorf("%w: %v(%v) -> %v(%v)",
 			ErrResolvedNoResources, htlc.IncomingChannel.ToUint64(),
 			htlc.IncomingIndex, htlc.OutgoingChannel.ToUint64(),

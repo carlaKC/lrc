@@ -21,8 +21,8 @@ type LocalResourceManager interface {
 	// proposed HTLC has been forwarded. It requires the forwarding
 	// restrictions of the outgoing channel to implement bucketing
 	// appropriately.
-	ForwardHTLC(htlc *ProposedHTLC, info *ChannelInfo) (*ForwardDecision,
-		error)
+	ForwardHTLC(htlc *ProposedHTLC, chanIn,
+		chanOut *ChannelInfo) (*ForwardDecision, error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
 	// in-flight htlc has been resolved. It returns the in flight HTLC as
@@ -52,21 +52,59 @@ type ForwardDecision struct {
 // and simulation, and wouldn't really be used much in a production
 // implementation.
 type ReputationCheck struct {
-	// IncomingReputation represents the reputation that has been built
-	// up by the incoming link, and any outstanding risk that it poses to
-	// us.
-	IncomingReputation
+	IncomingDirection ChannelPair
 
-	// OutgoingRevenue represents the cost of using the outgoing link,
-	// evaluated based on how valuable it has been to us in the past.
-	OutgoingRevenue float64
+	OutgoingDirection ChannelPair
 
 	// HTLCRisk represents the risk of the newly proposed HTLC, should it
 	// be used to jam our channel for its full expiry time.
 	HTLCRisk float64
 }
 
-type IncomingReputation struct {
+func (r *ReputationCheck) String() string {
+	return fmt.Sprintf("Incoming direction: %v, outgoing direction: %v "+
+		"for htlc risk: %v", r.IncomingDirection, r.OutgoingDirection,
+		r.HTLCRisk)
+}
+
+// SufficientReputation checks that both incoming and outgoing directions
+// have the correct reputation.
+func (r *ReputationCheck) SufficientReputation() bool {
+	return r.IncomingDirection.SufficientReputation(r.HTLCRisk) &&
+		r.OutgoingDirection.SufficientReputation(r.HTLCRisk)
+}
+
+type ChannelPair struct {
+	// IncomingChannel represents the reputation that has been built
+	// up by the incoming link, and any outstanding risk that it poses to
+	// us.
+	IncomingChannel Reputation
+
+	// OutgoingRevenue represents the cost of using the outgoing link,
+	// evaluated based on how valuable it has been to us in the past.
+	OutgoingRevenue float64
+}
+
+// SufficientReputation returns a boolean indicating whether a HTLC meets the
+// reputation bar to be forwarded with endorsement.
+func (c ChannelPair) SufficientReputation(htlcRisk float64) bool {
+	// The incoming channel has sufficient reputation if:
+	// incoming_channel_revenue - in_flight_risk - htlc_risk
+	//  >= outgoing_link_revenue
+	return c.IncomingChannel.IncomingRevenue > c.OutgoingRevenue+c.IncomingChannel.InFlightRisk+htlcRisk
+}
+
+// String for a ReputationCheck.
+func (c ChannelPair) String() string {
+	return fmt.Sprintf("outgoing revenue threshold: %v vs incoming "+
+		"revenue: %v with in flight risk: %v",
+		c.OutgoingRevenue, c.IncomingChannel.IncomingRevenue,
+		c.IncomingChannel.InFlightRisk)
+}
+
+// Reputation reflects the components that make up the reputation of a link in
+// the outgoing direction.
+type Reputation struct {
 	// IncomingRevenue represents the reputation that the forwarding
 	// channel has accrued over time.
 	IncomingRevenue float64
@@ -74,23 +112,6 @@ type IncomingReputation struct {
 	// InFlightRisk represents the outstanding risk of all of the
 	// forwarding party's currently in flight HTLCs.
 	InFlightRisk float64
-}
-
-// SufficientReputation returns a boolean indicating whether a HTLC meets the
-// reputation bar to be forwarded with endorsement.
-func (r *ReputationCheck) SufficientReputation() bool {
-	// The incoming channel has sufficient reputation if:
-	// incoming_channel_revenue - in_flight_risk - htlc_risk
-	//  >= outgoing_link_revenue
-	return r.IncomingRevenue > r.OutgoingRevenue+r.InFlightRisk+r.HTLCRisk
-}
-
-// String for a ReputationCheck.
-func (r *ReputationCheck) String() string {
-	return fmt.Sprintf("outgoing revenue threshold: %v vs incoming "+
-		"revenue: %v with in flight risk: %v and htlc risk: %v",
-		r.OutgoingRevenue, r.IncomingRevenue, r.InFlightRisk,
-		r.HTLCRisk)
 }
 
 // ForwardOutcome represents the various forwarding outcomes for a proposed
@@ -109,6 +130,12 @@ const (
 	// ForwardOutcomeEndorsed means that the HTLC should be forwarded
 	// with a positive endorsement signal.
 	ForwardOutcomeEndorsed
+
+	// ForwardOutcomeOutgoingUnkonwn is returned when the outgoing link
+	// does not have sufficient reputation and htlc is endorsed. The
+	// forwarding node must drop this payment or risk being jammed by the
+	// unknown downstream peer.
+	ForwardOutcomeOutgoingUnkonwn
 )
 
 func (f ForwardOutcome) String() string {
@@ -122,6 +149,9 @@ func (f ForwardOutcome) String() string {
 
 	case ForwardOutcomeNoResources:
 		return "no resources"
+
+	case ForwardOutcomeOutgoingUnkonwn:
+		return "unknown outgoing"
 
 	default:
 		return "unknown"
@@ -157,13 +187,18 @@ type reputationMonitor interface {
 	// is the outgoing link.
 	AddOutgoingInFlight(htlc *ProposedHTLC) error
 
-	// ResolveInFlight updates the reputation monitor to resolve a
-	// previously in-flight htlc.
-	ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC, error)
+	// ResolveIncoming updates the reputation monitor to resolve a
+	// previously in-flight htlc on the incoming link.
+	ResolveIncoming(htlc *ResolvedHTLC) (*InFlightHTLC, error)
 
-	// IncomingReputation returns the details of a reputation monitor's
-	// current standing.
-	IncomingReputation() IncomingReputation
+	// ResolveOutgoing updates the reputation monitor to resolve a
+	// previously in-flight htlc on the outgoing link.
+	ResolveOutgoing(incoming lnwire.ShortChannelID, index int,
+		effectiveFees float64) error
+
+	// Reputation returns the details of a reputation monitor's current
+	// standing as either an incoming or outgoing link.
+	Reputation(incoming bool) Reputation
 }
 
 // revenueMonitor is an interface that represents the tracking of forwading
@@ -172,11 +207,13 @@ type revenueMonitor interface {
 	// AddInFlight proposes the addition of a htlc to the outgoing channel,
 	// returning a forwarding decision for the htlc based on its
 	// endorsement and the reputation of the incoming link.
-	AddInFlight(incomingReputation IncomingReputation,
-		htlc *ProposedHTLC) ForwardDecision
+	AddInFlight(htlc *ProposedHTLC, sufficientReputation bool) ForwardOutcome
 
 	// ResolveInFlight removes a htlc from the outgoing channel.
 	ResolveInFlight(htlc *ResolvedHTLC, inFlight *InFlightHTLC) error
+
+	// Revenue returns the total revenue for the link.
+	Revenue() float64
 }
 
 // Endorsement represents the endorsement signaling that is passed along with

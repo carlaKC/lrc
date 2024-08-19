@@ -228,31 +228,11 @@ func (r *ResourceManager) getChannelReputation(
 			startValue,
 		)
 
-		r.log.Infof("Adding new channel reputation: %v with start: %v",
+		r.log.Infof("Added new channel reputation: %v with start: %v",
 			channel.ToUint64(), startValue)
 	}
 
 	return r.channelReputation[channel], nil
-}
-
-// sufficientReputation returns a reputation check that is used to determine
-// whether the forwarding peer has sufficient reputation to forward the
-// proposed htlc over the outgoing channel that they have requested.
-func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
-	outgoingChannelRevenue float64) (*ReputationCheck, error) {
-
-	incomingChannel, err := r.getChannelReputation(htlc.IncomingChannel)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ReputationCheck{
-		IncomingReputation: incomingChannel.IncomingReputation(),
-		OutgoingRevenue:    outgoingChannelRevenue,
-		HTLCRisk: outstandingRisk(
-			float64(r.params.BlockTime), htlc, r.resolutionPeriod,
-		),
-	}, nil
 }
 
 type htlcIdxTimestamp struct {
@@ -275,7 +255,7 @@ func (r *htlcIdxTimestamp) Less(other queue.PriorityQueueItem) bool {
 // If it returns false, it assumes that the HTLC will be failed back and does
 // not expect any further resolution notification.
 func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
-	chanOutInfo *ChannelInfo) (*ForwardDecision, error) {
+	chanInInfo, chanOutInfo *ChannelInfo) (*ForwardDecision, error) {
 
 	// Validate the HTLC amount. When LND intercepts, it hasn't yet
 	// checked anything about the HTLC so this value could be manipulated.
@@ -286,39 +266,94 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	r.Lock()
 	defer r.Unlock()
 
-	incomingChannel, err := r.getChannelReputation(htlc.IncomingChannel)
+	// First get the incoming/outgoing pair's reputation.
+	incomingChannelRep, err := r.getChannelReputation(htlc.IncomingChannel)
 	if err != nil {
 		return nil, err
 	}
 
-        // TODO: add outgoingChannelRep
-
-	outgoingChannel, err := r.getTargetChannel(
+	outgoingChannelRev, err := r.getTargetChannel(
 		htlc.OutgoingChannel, chanOutInfo,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-        // TODO: add incomingChannelRep
-
-        // TODO: get reputation based on both directions
-
-	// Get a forwarding decision from the outgoing channel, considering
-	// the reputation of the incoming channel.
-	forwardDecision := outgoingChannel.AddInFlight(
-		incomingChannel.IncomingReputation(), htlc,
-	)
-
-	// If we do proceed with the forward, then add it to our incoming
-	// link, tracking our outgoing endorsement status.
-	if err := incomingChannel.AddIncomingInFlight(
-		htlc, forwardDecision.ForwardOutcome,
-	); err != nil {
+	// Next, get the outgoing/incoming pair's reputation.
+	outgoingChannelRep, err := r.getChannelReputation(htlc.OutgoingChannel)
+	if err != nil {
 		return nil, err
 	}
 
-	return &forwardDecision, nil
+	incomingChannelRev, err := r.getTargetChannel(
+		htlc.IncomingChannel, chanInInfo,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	reputation := ReputationCheck{
+		IncomingDirection: ChannelPair{
+			IncomingChannel: incomingChannelRep.Reputation(true),
+			OutgoingRevenue: outgoingChannelRev.Revenue(),
+		},
+		OutgoingDirection: ChannelPair{
+			IncomingChannel: outgoingChannelRep.Reputation(false),
+			OutgoingRevenue: incomingChannelRev.Revenue(),
+		},
+		HTLCRisk: outstandingRisk(
+			float64(r.params.BlockTime), htlc,
+			r.params.ResolutionPeriod,
+		),
+	}
+
+	// addInFlight is a closure that will add our HTLC to both the incoming
+	// and outgoing channel's in flight htlcs. Even if it's actually failed
+	// before we forward on to the outgoing link, we expected to receive a
+	// resolution for it, and will appropriately clear it out then. This
+	// happens near-instantly for our local failures.
+	addInFlight := func(forwardOutcome ForwardOutcome) error {
+		if err := incomingChannelRep.AddIncomingInFlight(
+			htlc, forwardOutcome,
+		); err != nil {
+			return err
+		}
+
+		if err := outgoingChannelRep.AddOutgoingInFlight(htlc); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// If the outgoing peer does not have
+	outgoingRep := reputation.OutgoingDirection.SufficientReputation(
+		reputation.HTLCRisk,
+	)
+	if htlc.IncomingEndorsed == EndorsementTrue && !outgoingRep {
+		err = addInFlight(ForwardOutcomeOutgoingUnkonwn)
+		if err != nil {
+			return nil, err
+		}
+
+		return &ForwardDecision{
+			ReputationCheck: reputation,
+			ForwardOutcome:  ForwardOutcomeOutgoingUnkonwn,
+		}, nil
+	}
+
+	// Get a forwarding decision from the outgoing channel, considering
+	// the reputation of the incoming channel.
+	forwardOutcome := outgoingChannelRev.AddInFlight(
+		htlc, reputation.SufficientReputation(),
+	)
+	if err := addInFlight(forwardOutcome); err != nil {
+		return nil, err
+	}
+
+	return &ForwardDecision{
+		ReputationCheck: reputation,
+		ForwardOutcome:  forwardOutcome,
+	}, nil
 }
 
 // ResolveHTLC updates the reputation manager's state to reflect the
@@ -344,18 +379,32 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 		)
 	}
 
-	// Resolve the HTLC on the incoming channel. If it's not found, it's
-	// possible that we only started tracking after the HTLC was forwarded
-	// so we log the event and return without error.
-	inFlight, err := incomingChannel.ResolveInFlight(htlc)
+	// Resolve the HTLC on both the incoming and outgoing channel's in
+	// flight trackers. We know that both must be present because we added
+	// them on interception of the HTLC.
+	inFlight, err := incomingChannel.ResolveIncoming(htlc)
 	if err != nil {
+		return nil, err
+	}
+
+	effectiveFees := effectiveFees(
+		r.resolutionPeriod, htlc.TimestampSettled, inFlight,
+		htlc.Success,
+	)
+
+	outgoingChannelRep := r.channelReputation[htlc.OutgoingChannel]
+	if err := outgoingChannelRep.ResolveOutgoing(
+		htlc.IncomingChannel, htlc.IncomingIndex, effectiveFees,
+	); err != nil {
 		return nil, err
 	}
 
 	// If the htlc was not assigned any outgoing resources, then it would
 	// not have been allocated any resources on our outgoing link (it is
 	// expected to have been failed back), so we can exit here.
-	if inFlight.OutgoingDecision == ForwardOutcomeNoResources {
+	if inFlight.OutgoingDecision == ForwardOutcomeNoResources ||
+		inFlight.OutgoingDecision == ForwardOutcomeOutgoingUnkonwn {
+
 		return inFlight, nil
 	}
 

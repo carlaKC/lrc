@@ -32,6 +32,7 @@ func newReputationTracker(clock clock.Clock, params ManagerParams,
 			clock, params.reputationWindow(), startValue,
 		),
 		incomingInFlight: make(map[int]*InFlightHTLC),
+		outgoingInFlight: make(map[lnwire.ShortChannelID]map[int]float64),
 		blockTime:        float64(params.BlockTime),
 		resolutionPeriod: params.ResolutionPeriod,
 		log:              log,
@@ -64,10 +65,10 @@ type reputationTracker struct {
 	log Logger
 }
 
-func (r *reputationTracker) IncomingReputation() IncomingReputation {
-	return IncomingReputation{
+func (r *reputationTracker) Reputation(incoming bool) Reputation {
+	return Reputation{
 		IncomingRevenue: r.revenue.getValue(),
-		InFlightRisk:    r.inFlightHTLCRisk(),
+		InFlightRisk:    r.inFlightHTLCRisk(incoming),
 	}
 }
 
@@ -117,11 +118,11 @@ func (r *reputationTracker) AddOutgoingInFlight(htlc *ProposedHTLC) error {
 	return nil
 }
 
-// ResolveInFlight removes a htlc from the reputation tracker's state,
+// ResolveIncoming removes a htlc from the reputation tracker's state,
 // returning an error if it is not found, and updates the link's reputation
 // accordingly. It will also return the original in flight htlc when
 // successfully removed.
-func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
+func (r *reputationTracker) ResolveIncoming(htlc *ResolvedHTLC) (*InFlightHTLC,
 	error) {
 
 	inFlight, ok := r.incomingInFlight[htlc.IncomingIndex]
@@ -138,7 +139,7 @@ func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
 		htlc.Success,
 	)
 
-	r.log.Infof("Adding effective fees to channel: %v: %v",
+	r.log.Infof("Adding effective fees to incoming channel: %v: %v",
 		htlc.IncomingChannel.ToUint64(), effectiveFees)
 
 	r.revenue.add(effectiveFees)
@@ -146,10 +147,56 @@ func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
 	return inFlight, nil
 }
 
+// ResolveOutgoing removes a htlc from the reputation tracker's state,
+// returning an error if it is not found.
+func (r *reputationTracker) ResolveOutgoing(incoming lnwire.ShortChannelID,
+	index int, effectiveFees float64) error {
+
+	inFlightChan, ok := r.outgoingInFlight[incoming]
+	if !ok {
+		return fmt.Errorf("Outgoing channel lookup %w: %v(%v)",
+			ErrResolutionNotFound, incoming, index)
+	}
+
+	if _, ok := inFlightChan[index]; !ok {
+		return fmt.Errorf("Outgoing index lookup: %w: %v(%v)",
+			ErrResolutionNotFound, incoming, index)
+	}
+
+	delete(inFlightChan, index)
+
+	// We also add the effective fees to the outgoing channel's revenue, to
+	// hold it accountable for the htlc's behavior.
+	r.log.Infof("Adding effective fees to outgoing channel: %v",
+		effectiveFees)
+
+	r.revenue.add(effectiveFees)
+
+	// If there's nothing left, we can delete the channel map as well.
+	if len(inFlightChan) == 0 {
+		delete(r.outgoingInFlight, incoming)
+		return nil
+	}
+
+	r.outgoingInFlight[incoming] = inFlightChan
+
+	return nil
+}
+
 // inFlightHTLCRisk returns the total outstanding risk of the incoming
 // in-flight HTLCs from a specific channel.
-func (r *reputationTracker) inFlightHTLCRisk() float64 {
+func (r *reputationTracker) inFlightHTLCRisk(incoming bool) float64 {
 	var inFlightRisk float64
+	if !incoming {
+		for _, incomingChan := range r.outgoingInFlight {
+			for _, htlc := range incomingChan {
+				inFlightRisk += htlc
+			}
+		}
+
+		return inFlightRisk
+	}
+
 	for _, htlc := range r.incomingInFlight {
 		inFlightRisk += htlc.inFlightRisk(
 			r.blockTime, r.resolutionPeriod,
