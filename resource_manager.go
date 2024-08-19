@@ -291,12 +291,18 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 		return nil, err
 	}
 
+        // TODO: add outgoingChannelRep
+
 	outgoingChannel, err := r.getTargetChannel(
 		htlc.OutgoingChannel, chanOutInfo,
 	)
 	if err != nil {
 		return nil, err
 	}
+
+        // TODO: add incomingChannelRep
+
+        // TODO: get reputation based on both directions
 
 	// Get a forwarding decision from the outgoing channel, considering
 	// the reputation of the incoming channel.

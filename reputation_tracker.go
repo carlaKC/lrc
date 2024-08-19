@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lightningnetwork/lnd/clock"
+	"github.com/lightningnetwork/lnd/lnwire"
 )
 
 var (
@@ -46,6 +47,12 @@ type reputationTracker struct {
 	// on the incoming link.
 	incomingInFlight map[int]*InFlightHTLC
 
+	// outgoingInFlight provides a map of in-flight HTLCs that use the
+	// channel as the outgoing link. These HTLCs are keyed by incoming
+	// channel and index, because we don't yet have a unique identifier for
+	// the outgoing htlc.
+	outgoingInFlight map[lnwire.ShortChannelID]map[int]float64
+
 	// blockTime is the expected time to find a block, surfaced to account
 	// for simulation scenarios where this isn't 10 minutes.
 	blockTime float64
@@ -64,7 +71,7 @@ func (r *reputationTracker) IncomingReputation() IncomingReputation {
 	}
 }
 
-// AddIncomingInFlight updates the outgoing channel's view to include a new in
+// AddIncomingInFlight updates the incoming channel's view to include a new in
 // flight HTLC.
 func (r *reputationTracker) AddIncomingInFlight(htlc *ProposedHTLC,
 	outgoingDecision ForwardOutcome) error {
@@ -82,6 +89,30 @@ func (r *reputationTracker) AddIncomingInFlight(htlc *ProposedHTLC,
 	}
 
 	r.incomingInFlight[htlc.IncomingIndex] = inFlightHTLC
+
+	return nil
+}
+
+// AddOutgoingInFlight updates the outgoing channel's view to include the in
+// flight htlc.
+func (r *reputationTracker) AddOutgoingInFlight(htlc *ProposedHTLC) error {
+	incomingChanHTLCs, ok := r.outgoingInFlight[htlc.IncomingChannel]
+	if !ok {
+		r.outgoingInFlight[htlc.IncomingChannel] = make(
+			map[int]float64,
+		)
+	}
+
+	// Sanity check that HTLC is not already checked.
+	if _, ok := incomingChanHTLCs[htlc.IncomingIndex]; ok {
+		return fmt.Errorf("AddOutgoinInFlight: %w: %v",
+			ErrDuplicateIndex, htlc.IncomingIndex)
+	}
+
+	// For outgoing HTLCs, we only need to track our in flight risk.
+	r.outgoingInFlight[htlc.IncomingChannel][htlc.IncomingIndex] = htlc.inFlightRisk(
+		r.blockTime, r.resolutionPeriod,
+	)
 
 	return nil
 }
@@ -120,13 +151,8 @@ func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
 func (r *reputationTracker) inFlightHTLCRisk() float64 {
 	var inFlightRisk float64
 	for _, htlc := range r.incomingInFlight {
-		// Only endorsed HTLCs count towards our in flight risk.
-		if htlc.IncomingEndorsed != EndorsementTrue {
-			continue
-		}
-
-		inFlightRisk += outstandingRisk(
-			r.blockTime, htlc.ProposedHTLC, r.resolutionPeriod,
+		inFlightRisk += htlc.inFlightRisk(
+			r.blockTime, r.resolutionPeriod,
 		)
 	}
 

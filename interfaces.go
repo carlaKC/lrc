@@ -152,6 +152,11 @@ type reputationMonitor interface {
 	AddIncomingInFlight(htlc *ProposedHTLC,
 		outgoingDecision ForwardOutcome) error
 
+	// AddOutgoingInFlight updates the reputation monitor for an outgoing
+	// link to reflect that it currently has an outstanding htlc where it
+	// is the outgoing link.
+	AddOutgoingInFlight(htlc *ProposedHTLC) error
+
 	// ResolveInFlight updates the reputation monitor to resolve a
 	// previously in-flight htlc.
 	ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC, error)
@@ -244,6 +249,17 @@ type ProposedHTLC struct {
 	// CltvExpiryDelta is the difference between the block height at which
 	// the HTLC was forwarded and its outgoing_cltv_expiry.
 	CltvExpiryDelta uint32
+}
+
+func (p *ProposedHTLC) inFlightRisk(blockTime float64,
+	resolutionPeriod time.Duration) float64 {
+
+	// Only endorsed HTLCs count towards our in flight risk.
+	if p.IncomingEndorsed != EndorsementTrue {
+		return 0
+	}
+
+	return outstandingRisk(blockTime, p, resolutionPeriod)
 }
 
 // ForwardingFee returns the fee paid by a htlc.
