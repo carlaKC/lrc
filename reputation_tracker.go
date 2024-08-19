@@ -18,6 +18,16 @@ var (
 	// ErrDuplicateIndex is returned when an incoming htlc index is
 	// duplicated.
 	ErrDuplicateIndex = errors.New("htlc index duplicated")
+
+	// ErrProtocolLimit is returned when we exceed the protocol defined
+	// limit of htlc slots.
+	ErrProtocolLimit = errors.New("slot count exceeds protocol limit of " +
+		"483")
+
+	// ErrProtectedPercentage is returned when a protected percentage
+	// is invalid.
+	ErrProtectedPercentage = errors.New("protected percentage must be " +
+		"<= 100")
 )
 
 // Compile time check that reputationTracker implements the reputationMonitor
@@ -25,23 +35,75 @@ var (
 var _ reputationMonitor = (*reputationTracker)(nil)
 
 func newReputationTracker(clock clock.Clock, params ManagerParams,
-	log Logger, startValue *DecayingAverageStart) *reputationTracker {
+	log Logger, info ChannelInfo, history *ChannelHistory) (
+	*reputationTracker, error) {
+
+	if info.InFlightHTLC > 483 {
+		return nil, fmt.Errorf("%w: with %v slots", ErrProtocolLimit,
+			info.InFlightHTLC)
+	}
+
+	if params.ProtectedPercentage > 100 {
+		return nil, fmt.Errorf("%w: with %v percentage",
+			ErrProtectedPercentage, params.ProtectedPercentage)
+	}
+
+	generalLiquidity := info.InFlightLiquidity - lnwire.MilliSatoshi(
+		(uint64(info.InFlightLiquidity)*params.ProtectedPercentage)/100,
+	)
+
+	generalSlots := info.InFlightHTLC - (info.InFlightHTLC*params.ProtectedPercentage)/100
 
 	return &reputationTracker{
-		revenue: newDecayingAverage(
-			clock, params.reputationWindow(), startValue,
+		bidirectionalRevenue: newDecayingAverage(
+			clock, params.RevenueWindow, history.Revenue,
+		),
+		incomingReputation: newDecayingAverage(
+			clock, params.reputationWindow(), history.IncomingReputation,
+		),
+		outgoingReputation: newDecayingAverage(
+			clock, params.reputationWindow(), history.OutgoingReputation,
 		),
 		incomingInFlight: make(map[int]*InFlightHTLC),
+		outgoingInFlight: make(map[lnwire.ShortChannelID]map[int]outgoingHTLC),
 		blockTime:        float64(params.BlockTime),
+		generalLiquidity: generalLiquidity,
+		generalSlots:     int(generalSlots),
 		resolutionPeriod: params.ResolutionPeriod,
 		log:              log,
-	}
+	}, nil
 }
 
+// reputationTracker is responsible for tracking the traffic of a channel to
+// build a local view of it's history as a forwarding partner, and implements
+// resource bucketing for the channel's outgoing resources. We'll be tracking
+// various different values used by our reputation scheme:
+//   - incomingReputation: used when the channel forwards us an incoming HTLC,
+//     and compared to the outgoing revenue of the target channel to decide
+//     whether the node has good reputation for incoming HTLCs. This reputation
+//     is used to decide whether to grant the HTLC access to protected resources
+//     on the outgoing link.
+//   - outgoingReputation: used when the channel has been requested as the
+//     outgoing link for a forward to decide whether to forward endorsed HTLCs.
+//   - bidirectionalRevenue: the revenue that the link has earned us, as both an
+//     incoming and outgoing link. This value is used to determine whether other
+//     channels have sufficient reputation to forward htlcs over this channel.
+//
+// To keep track of resource bucketing and in-flight HTLCs, we track both
+// incoming and outgoing in-flight HTLCs on the channel against our allocated
+// general resources.
 type reputationTracker struct {
-	// revenue tracks the bi-directional revenue that this channel has
-	// earned the local node as the incoming edge for HTLC forwards.
-	revenue *decayingAverage
+	// bidirectionalRevenue tracks the revenue that the channel has earned
+	// as both the incoming and outgoing link.
+	bidirectionalRevenue *decayingAverage
+
+	// incomingReputation tracks the revenue that the channel has earned us
+	// as the incoming link.
+	incomingReputation *decayingAverage
+
+	// outgoingReputation tracks the revenue that the channel has earned us
+	// as the outgoing link.
+	outgoingReputation *decayingAverage
 
 	// incomingInFlight provides a map of in-flight HTLCs, keyed by htlc id
 	// on the incoming link.
@@ -51,7 +113,7 @@ type reputationTracker struct {
 	// channel as the outgoing link. These HTLCs are keyed by incoming
 	// channel and index, because we don't yet have a unique identifier for
 	// the outgoing htlc.
-	outgoingInFlight map[lnwire.ShortChannelID]map[int]float64
+	outgoingInFlight map[lnwire.ShortChannelID]map[int]outgoingHTLC
 
 	// blockTime is the expected time to find a block, surfaced to account
 	// for simulation scenarios where this isn't 10 minutes.
@@ -61,14 +123,88 @@ type reputationTracker struct {
 	// a htlc to resolve in.
 	resolutionPeriod time.Duration
 
+	// generalLiquidity is the amount of liquidity available in the channel
+	// on our side (outgoing direction).
+	generalLiquidity lnwire.MilliSatoshi
+
+	// generalSlots is the number of slots available in the channel on our
+	// side (outgoing direction).
+	generalSlots int
+
 	log Logger
 }
 
-func (r *reputationTracker) IncomingReputation() IncomingReputation {
-	return IncomingReputation{
-		IncomingRevenue: r.revenue.getValue(),
-		InFlightRisk:    r.inFlightHTLCRisk(),
+// outgoingHTLC tracks the minimal amount of information that we need on hand
+// for an outgoing HTLC to keep track of our resource buckets.
+type outgoingHTLC struct {
+	amount    lnwire.MilliSatoshi
+	risk      float64
+	protected bool
+}
+
+// Reputation returns the reputation score for a link as either an incoming or
+// outgoing source of traffic.
+func (r *reputationTracker) Reputation(incoming bool) Reputation {
+	rep := Reputation{
+		Revenue:      r.bidirectionalRevenue.getValue(),
+		Reputation:   r.incomingReputation.getValue(),
+		InFlightRisk: r.inFlightHTLCRisk(incoming),
 	}
+
+	if !incoming {
+		rep.Reputation = r.outgoingReputation.getValue()
+	}
+
+	return rep
+}
+
+// MayAddOutgoing examines the htlc's reputation and our available resources
+// to make a forwarding decision.
+func (r *reputationTracker) MayAddOutgoing(reputation ReputationCheck,
+	amt lnwire.MilliSatoshi, incomingEndorsed bool) ForwardOutcome {
+
+	// We can always accommodate HTLCs that are endorsed and have sufficient
+	// reputation.
+	if reputation.SufficientReputation() && incomingEndorsed {
+		return ForwardOutcomeEndorsed
+	}
+
+	// If the outgoing channel does not have reputation and the incoming
+	// htlc is endorsed, we don't risk forwarding a htlc to an unknown
+	// entity.
+	if !reputation.OutgoingReputation() && incomingEndorsed {
+		return ForwardOutcomeOutgoingUnkonwn
+	}
+
+	// Otherwise, we're looking to add the HTLC to our general resources.
+	// Check whether we can accommodate it based on our current set of in
+	// flight htlcs.
+	var (
+		generalSlotsOccupied      int
+		generalLiquidityOccuplied lnwire.MilliSatoshi
+	)
+
+	for _, channel := range r.outgoingInFlight {
+		for _, htlc := range channel {
+			// We're only counting occupancy of our general bucket.
+			if htlc.protected {
+				continue
+			}
+
+			generalSlotsOccupied++
+			generalLiquidityOccuplied += htlc.amount
+		}
+	}
+
+	if generalSlotsOccupied+1 > r.generalSlots {
+		return ForwardOutcomeNoResources
+	}
+
+	if generalLiquidityOccuplied+amt > r.generalLiquidity {
+		return ForwardOutcomeNoResources
+	}
+
+	return ForwardOutcomeUnendorsed
 }
 
 // AddIncomingInFlight updates the incoming channel's view to include a new in
@@ -77,7 +213,7 @@ func (r *reputationTracker) AddIncomingInFlight(htlc *ProposedHTLC,
 	outgoingDecision ForwardOutcome) error {
 
 	inFlightHTLC := &InFlightHTLC{
-		TimestampAdded:   r.revenue.clock.Now(),
+		TimestampAdded:   r.incomingReputation.clock.Now(),
 		ProposedHTLC:     htlc,
 		OutgoingDecision: outgoingDecision,
 	}
@@ -95,11 +231,13 @@ func (r *reputationTracker) AddIncomingInFlight(htlc *ProposedHTLC,
 
 // AddOutgoingInFlight updates the outgoing channel's view to include the in
 // flight htlc.
-func (r *reputationTracker) AddOutgoingInFlight(htlc *ProposedHTLC) error {
+func (r *reputationTracker) AddOutgoingInFlight(htlc *ProposedHTLC,
+	protectedResources bool) error {
+
 	incomingChanHTLCs, ok := r.outgoingInFlight[htlc.IncomingChannel]
 	if !ok {
 		r.outgoingInFlight[htlc.IncomingChannel] = make(
-			map[int]float64,
+			map[int]outgoingHTLC,
 		)
 	}
 
@@ -110,49 +248,129 @@ func (r *reputationTracker) AddOutgoingInFlight(htlc *ProposedHTLC) error {
 	}
 
 	// For outgoing HTLCs, we only need to track our in flight risk.
-	r.outgoingInFlight[htlc.IncomingChannel][htlc.IncomingIndex] = htlc.inFlightRisk(
-		r.blockTime, r.resolutionPeriod,
-	)
+	r.outgoingInFlight[htlc.IncomingChannel][htlc.IncomingIndex] = outgoingHTLC{
+		amount:    htlc.OutgoingAmount,
+		protected: protectedResources,
+		// We track this risk here so that we don't have to store htlc
+		// fee and expiry values in outgoing.
+		risk: InFlightRisk(
+			r.blockTime, r.resolutionPeriod, htlc,
+		),
+	}
 
 	return nil
 }
 
-// ResolveInFlight removes a htlc from the reputation tracker's state,
-// returning an error if it is not found, and updates the link's reputation
-// accordingly. It will also return the original in flight htlc when
-// successfully removed.
-func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
-	error) {
-
-	inFlight, ok := r.incomingInFlight[htlc.IncomingIndex]
-	if !ok {
-		return nil, fmt.Errorf("%w: %v(%v) -> %v(%v)", ErrResolutionNotFound,
-			htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex,
-			htlc.OutgoingChannel.ToUint64(), htlc.OutgoingIndex)
-	}
-
-	delete(r.incomingInFlight, inFlight.IncomingIndex)
+// addBidirectionalRevenue adds a htlc to the bidirectional revenue tracker's
+// running total if it was successful.
+func (r *reputationTracker) updateRevenue(incoming bool, inFlight *InFlightHTLC,
+	htlc *ResolvedHTLC) {
 
 	effectiveFees := effectiveFees(
 		r.resolutionPeriod, htlc.TimestampSettled, inFlight,
 		htlc.Success,
 	)
 
-	r.log.Infof("Adding effective fees to channel: %v: %v",
-		htlc.IncomingChannel.ToUint64(), effectiveFees)
+	// First, update either the incoming or outgoing direction with the
+	// effective fees for the HTLC.
+	if incoming {
+		r.log.Infof("Adding effective fees to incoming channel: %v: %v",
+			htlc.IncomingChannel, effectiveFees)
 
-	r.revenue.add(effectiveFees)
+		r.incomingReputation.add(effectiveFees)
+	} else {
+		r.log.Infof("Adding effective fees to outgoing channel: %v: %v",
+			htlc.OutgoingChannel, effectiveFees)
+
+		r.outgoingReputation.add(effectiveFees)
+	}
+
+	if !htlc.Success {
+		return
+	}
+
+	r.log.Infof("HTLC successful (%v(%v) -> %v(%v)): adding fees "+
+		"to channel: %v msat", htlc.IncomingChannel,
+		htlc.IncomingIndex, htlc.OutgoingChannel,
+		htlc.OutgoingIndex, inFlight.ForwardingFee())
+
+	r.bidirectionalRevenue.add(float64(inFlight.ForwardingFee()))
+}
+
+// ResolveIncoming removes a htlc from the reputation tracker's state,
+// returning an error if it is not found, and updates the link's reputation
+// accordingly. It will also return the original in flight htlc when
+// successfully removed.
+func (r *reputationTracker) ResolveIncoming(htlc *ResolvedHTLC) (*InFlightHTLC,
+	error) {
+
+	inFlight, ok := r.incomingInFlight[htlc.IncomingIndex]
+	if !ok {
+		return nil, fmt.Errorf("%w: %v(%v) -> %v(%v)", ErrResolutionNotFound,
+			htlc.IncomingChannel, htlc.IncomingIndex,
+			htlc.OutgoingChannel, htlc.OutgoingIndex)
+	}
+
+	delete(r.incomingInFlight, inFlight.IncomingIndex)
+
+	// Add the htlc to both our incoming and bidirectional totals.
+	r.updateRevenue(true, inFlight, htlc)
 
 	return inFlight, nil
 }
 
+// ResolveOutgoing removes a htlc from the reputation tracker's state,
+// returning an error if it is not found.
+func (r *reputationTracker) ResolveOutgoing(htlc *InFlightHTLC,
+	resolution *ResolvedHTLC) error {
+
+	inFlightChan, ok := r.outgoingInFlight[htlc.IncomingChannel]
+	if !ok {
+		return fmt.Errorf("Outgoing channel lookup %w: %v(%v)",
+			ErrResolutionNotFound, htlc.IncomingChannel,
+			htlc.IncomingIndex)
+	}
+
+	if _, ok := inFlightChan[htlc.IncomingIndex]; !ok {
+		return fmt.Errorf("Outgoing index lookup: %w: %v(%v)",
+			ErrResolutionNotFound, htlc.IncomingChannel,
+			htlc.IncomingIndex)
+	}
+
+	delete(inFlightChan, htlc.IncomingIndex)
+
+	// We also add the effective fees to the outgoing channel's revenue, to
+	// hold it accountable for the htlc's behavior.
+	r.updateRevenue(false, htlc, resolution)
+
+	// If there's nothing left, we can delete the channel map as well.
+	if len(inFlightChan) == 0 {
+		delete(r.outgoingInFlight, htlc.IncomingChannel)
+		return nil
+	}
+
+	r.outgoingInFlight[htlc.IncomingChannel] = inFlightChan
+
+	return nil
+}
+
 // inFlightHTLCRisk returns the total outstanding risk of the incoming
 // in-flight HTLCs from a specific channel.
-func (r *reputationTracker) inFlightHTLCRisk() float64 {
+func (r *reputationTracker) inFlightHTLCRisk(incoming bool) float64 {
 	var inFlightRisk float64
+	if !incoming {
+		for _, incomingChan := range r.outgoingInFlight {
+			for _, htlc := range incomingChan {
+				inFlightRisk += htlc.risk
+			}
+		}
+
+		return inFlightRisk
+	}
+
 	for _, htlc := range r.incomingInFlight {
-		inFlightRisk += htlc.inFlightRisk(
-			r.blockTime, r.resolutionPeriod,
+		inFlightRisk += InFlightRisk(
+			r.blockTime, r.resolutionPeriod, htlc.ProposedHTLC,
 		)
 	}
 
@@ -193,8 +411,19 @@ func effectiveFees(resolutionPeriod time.Duration, timestampSettled time.Time,
 	}
 }
 
-// outstandingRisk calculates the outstanding risk of in-flight HTLCs.
-func outstandingRisk(blockTime float64, htlc *ProposedHTLC,
+func InFlightRisk(blockTime float64, resolutionPeriod time.Duration,
+	htlc *ProposedHTLC) float64 {
+
+	// Only endorsed HTLCs count towards our in flight risk.
+	if htlc.IncomingEndorsed != EndorsementTrue {
+		return 0
+	}
+
+	return OutstandingRisk(blockTime, htlc, resolutionPeriod)
+}
+
+// OutstandingRisk calculates the outstanding risk of in-flight HTLCs.
+func OutstandingRisk(blockTime float64, htlc *ProposedHTLC,
 	resolutionPeriod time.Duration) float64 {
 
 	return (float64(htlc.ForwardingFee()) *

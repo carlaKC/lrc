@@ -21,8 +21,8 @@ type LocalResourceManager interface {
 	// proposed HTLC has been forwarded. It requires the forwarding
 	// restrictions of the outgoing channel to implement bucketing
 	// appropriately.
-	ForwardHTLC(htlc *ProposedHTLC, info *ChannelInfo) (*ForwardDecision,
-		error)
+	ForwardHTLC(htlc *ProposedHTLC, chanIn,
+		chanOut ChannelInfo) (*ForwardDecision, error)
 
 	// ResolveHTLC updates the reputation manager to reflect that an
 	// in-flight htlc has been resolved. It returns the in flight HTLC as
@@ -47,50 +47,67 @@ type ForwardDecision struct {
 	ForwardOutcome
 }
 
-// ReputationCheck provides the reputation scores that are used to make a
-// forwarding decision for a HTLC. These are surfaced for the sake of debugging
-// and simulation, and wouldn't really be used much in a production
-// implementation.
 type ReputationCheck struct {
-	// IncomingReputation represents the reputation that has been built
-	// up by the incoming link, and any outstanding risk that it poses to
-	// us.
-	IncomingReputation
+	IncomingChannel Reputation
 
-	// OutgoingRevenue represents the cost of using the outgoing link,
-	// evaluated based on how valuable it has been to us in the past.
-	OutgoingRevenue float64
+	OutgoingChannel Reputation
 
-	// HTLCRisk represents the risk of the newly proposed HTLC, should it
-	// be used to jam our channel for its full expiry time.
+	// HTLCRisk is the risk that the HTLC poses to the forwarding node.
 	HTLCRisk float64
 }
 
-type IncomingReputation struct {
-	// IncomingRevenue represents the reputation that the forwarding
-	// channel has accrued over time.
-	IncomingRevenue float64
+// IncomingReputation returns a boolean indicating whether the proposed forward
+// has good reputation in the incoming direction.
+func (r ReputationCheck) IncomingReputation() bool {
+	risk := r.IncomingChannel.InFlightRisk + r.HTLCRisk
+	return r.IncomingChannel.Reputation > r.OutgoingChannel.Revenue+risk
+}
 
-	// InFlightRisk represents the outstanding risk of all of the
-	// forwarding party's currently in flight HTLCs.
+// OutgoingReputation returns a boolean indicating whether the proposed forward
+// has good reputation in the outgoing direction.
+func (r ReputationCheck) OutgoingReputation() bool {
+	risk := r.OutgoingChannel.InFlightRisk + r.HTLCRisk
+	return r.OutgoingChannel.Reputation > r.IncomingChannel.Revenue+risk
+}
+
+// SufficientReputation returns a boolean indicating whether the forward has
+// sufficient reputation.
+func (r ReputationCheck) SufficientReputation() bool {
+	return r.IncomingReputation() && r.OutgoingReputation()
+}
+
+func (r ReputationCheck) String() string {
+	return fmt.Sprintf("Reputation check for HTLC risk %v: %v\n"+
+		"- Incoming check (%v): %v - %v - %v > %v\n"+
+		"- Outgoing check (%v): %v - %v - %v > %v",
+		r.HTLCRisk, r.SufficientReputation(),
+		r.IncomingReputation(), r.IncomingChannel.Revenue,
+		r.IncomingChannel.InFlightRisk, r.HTLCRisk,
+		r.OutgoingChannel.Revenue, r.OutgoingReputation(),
+		r.OutgoingChannel.Reputation, r.OutgoingChannel.InFlightRisk,
+		r.HTLCRisk, r.IncomingChannel.Revenue)
+}
+
+// Reputation reflects the components that make up the reputation of a link in
+// the outgoing direction.
+type Reputation struct {
+	// Revenue represents the revenue that the forwarding channel has
+	// accrued over time bidirectionally. This value represents the
+	// threshold that other channels must meet to have good reputation with
+	// this channel.
+	Revenue float64
+
+	// Reputation represents the directional fee contribution from this
+	// channel: (either as the outgoing or the incoming link) that has built
+	// - Incoming: the fees earned with this channel as the incoming link.
+	// - Outgoing: the fees earned with this channel as the outgoing link.
+	Reputation float64
+
+	// InFlightRisk represents the directional outstanding risk of the
+	// outstanding HTLCs with the channel:
+	// - Incoming reputation: the HTLCs the channel has forwarded us.
+	// - Outgoing reputation: the HTLCs we have forwarded the channel.
 	InFlightRisk float64
-}
-
-// SufficientReputation returns a boolean indicating whether a HTLC meets the
-// reputation bar to be forwarded with endorsement.
-func (r *ReputationCheck) SufficientReputation() bool {
-	// The incoming channel has sufficient reputation if:
-	// incoming_channel_revenue - in_flight_risk - htlc_risk
-	//  >= outgoing_link_revenue
-	return r.IncomingRevenue > r.OutgoingRevenue+r.InFlightRisk+r.HTLCRisk
-}
-
-// String for a ReputationCheck.
-func (r *ReputationCheck) String() string {
-	return fmt.Sprintf("outgoing revenue threshold: %v vs incoming "+
-		"revenue: %v with in flight risk: %v and htlc risk: %v",
-		r.OutgoingRevenue, r.IncomingRevenue, r.InFlightRisk,
-		r.HTLCRisk)
 }
 
 // ForwardOutcome represents the various forwarding outcomes for a proposed
@@ -109,7 +126,19 @@ const (
 	// ForwardOutcomeEndorsed means that the HTLC should be forwarded
 	// with a positive endorsement signal.
 	ForwardOutcomeEndorsed
+
+	// ForwardOutcomeOutgoingUnkonwn is returned when the outgoing link
+	// does not have sufficient reputation and htlc is endorsed. The
+	// forwarding node must drop this payment or risk being jammed by the
+	// unknown downstream peer.
+	ForwardOutcomeOutgoingUnkonwn
 )
+
+// NoForward returns true if we're expected to drop the HTLC.
+func (f ForwardOutcome) NoForward() bool {
+	return f == ForwardOutcomeNoResources ||
+		f == ForwardOutcomeOutgoingUnkonwn
+}
 
 func (f ForwardOutcome) String() string {
 	switch f {
@@ -122,6 +151,9 @@ func (f ForwardOutcome) String() string {
 
 	case ForwardOutcomeNoResources:
 		return "no resources"
+
+	case ForwardOutcomeOutgoingUnkonwn:
+		return "unknown outgoing"
 
 	default:
 		return "unknown"
@@ -155,15 +187,25 @@ type reputationMonitor interface {
 	// AddOutgoingInFlight updates the reputation monitor for an outgoing
 	// link to reflect that it currently has an outstanding htlc where it
 	// is the outgoing link.
-	AddOutgoingInFlight(htlc *ProposedHTLC) error
+	AddOutgoingInFlight(htlc *ProposedHTLC, protectedResource bool) error
 
-	// ResolveInFlight updates the reputation monitor to resolve a
-	// previously in-flight htlc.
-	ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC, error)
+	// MayAddOutgoing examines whether a HTLC can be added to the channel,
+	// returning a forwarding decision based on its endorsement and
+	// reputation.
+	MayAddOutgoing(reputation ReputationCheck,
+		amt lnwire.MilliSatoshi, incomingEndorsed bool) ForwardOutcome
 
-	// IncomingReputation returns the details of a reputation monitor's
-	// current standing.
-	IncomingReputation() IncomingReputation
+	// ResolveIncoming updates the reputation monitor to resolve a
+	// previously in-flight htlc on the incoming link.
+	ResolveIncoming(htlc *ResolvedHTLC) (*InFlightHTLC, error)
+
+	// ResolveOutgoing updates the reputation monitor to resolve a
+	// previously in-flight htlc on the outgoing link.
+	ResolveOutgoing(htlc *InFlightHTLC, resolution *ResolvedHTLC) error
+
+	// Reputation returns the details of a reputation monitor's current
+	// standing as either an incoming or outgoing link.
+	Reputation(incoming bool) Reputation
 }
 
 // revenueMonitor is an interface that represents the tracking of forwading
@@ -172,8 +214,7 @@ type revenueMonitor interface {
 	// AddInFlight proposes the addition of a htlc to the outgoing channel,
 	// returning a forwarding decision for the htlc based on its
 	// endorsement and the reputation of the incoming link.
-	AddInFlight(incomingReputation IncomingReputation,
-		htlc *ProposedHTLC) ForwardDecision
+	AddInFlight(htlc *ProposedHTLC, sufficientReputation bool) ForwardOutcome
 
 	// ResolveInFlight removes a htlc from the outgoing channel.
 	ResolveInFlight(htlc *ResolvedHTLC, inFlight *InFlightHTLC) error
@@ -251,17 +292,6 @@ type ProposedHTLC struct {
 	CltvExpiryDelta uint32
 }
 
-func (p *ProposedHTLC) inFlightRisk(blockTime float64,
-	resolutionPeriod time.Duration) float64 {
-
-	// Only endorsed HTLCs count towards our in flight risk.
-	if p.IncomingEndorsed != EndorsementTrue {
-		return 0
-	}
-
-	return outstandingRisk(blockTime, p, resolutionPeriod)
-}
-
 // ForwardingFee returns the fee paid by a htlc.
 func (p *ProposedHTLC) ForwardingFee() lnwire.MilliSatoshi {
 	return p.IncomingAmount - p.OutgoingAmount
@@ -332,4 +362,43 @@ type ChannelInfo struct {
 type Logger interface {
 	Infof(template string, args ...interface{})
 	Debugf(template string, args ...interface{})
+}
+
+// ChannelHistory provides historical values for reputation and revenue.
+type ChannelHistory struct {
+	// IncomingReputation is the reputation that the channel has built by
+	// forwarding incoming htlcs.
+	IncomingReputation *DecayingAverageStart
+
+	// OutgoingReputation is the reputation that the channel has built by
+	// forwarding outgoing htlcs.
+	OutgoingReputation *DecayingAverageStart
+
+	// Revenue is the bidirectional revenue of the channel that represents
+	// our reputation threshold for other channels.
+	Revenue *DecayingAverageStart
+}
+
+func (c *ChannelHistory) String() string {
+	str := ""
+
+	if c.IncomingReputation != nil {
+		str = fmt.Sprintf("incoming reputation: %v\n",
+			c.IncomingReputation.Value)
+	}
+
+	if c.OutgoingReputation != nil {
+		str = fmt.Sprintf("%voutgoing reputation: %v\n", str,
+			c.OutgoingReputation.Value)
+	}
+
+	if c.Revenue != nil {
+		str = fmt.Sprintf("%vrevenue: %v", str, c.Revenue.Value)
+	}
+
+	if str == "" {
+		return "no history"
+	}
+
+	return str
 }

@@ -44,29 +44,17 @@ type ResourceManager struct {
 	//   node that have not yet resolved.
 	channelReputation map[lnwire.ShortChannelID]reputationMonitor
 
-	// channelRevenue tracks the routing revenue that channels have
-	// earned the local node for both incoming and outgoing HTLCs.
-	channelRevenue map[lnwire.ShortChannelID]revenueMonitor
-
 	// resolutionPeriod is the period of time that is considered reasonable
 	// for a htlc to resolve in.
 	resolutionPeriod time.Duration
 
-	// lookupReputation fetches previously persisted resolution values for
-	// a channel.
-	lookupReputation LookupReputation
-
-	// lookupRevenue fetches previously persisted revenue values for
-	// a channel.
-	lookupRevenue LookupRevenue
+	// lookupHistory fetches the historical reputation and revenue values
+	// for a channel.
+	lookupHistory GetHistoryFunc
 
 	// newReputationMonitor creates a new reputation monitor, pulled
 	// out for mocking purposes in tests.
 	newReputationMonitor NewReputationMonitor
-
-	// newRevenueMonitor creates a new revenue monitor, pull out for mocking
-	// in tests.
-	newRevenueMonitor NewRevenueMonitor
 
 	clock clock.Clock
 
@@ -78,26 +66,14 @@ type ResourceManager struct {
 
 type ChannelFetcher func(lnwire.ShortChannelID) (*ChannelInfo, error)
 
-// LookupReputation is the function signature for fetching a decaying average
-// start value for the give channel's reputation. If not history is available
-// it is expected to return nil.
-type LookupReputation func(id lnwire.ShortChannelID) (*DecayingAverageStart,
-	error)
-
-// LookupReputation is the function signature for fetching a decaying average
-// start value for the give channel's reputation. If not history is available
-// it is expected to return nil.
-type LookupRevenue func(id lnwire.ShortChannelID) (*DecayingAverageStart,
-	error)
+// GetHistoryFunc is the function signature for fetching the forwarding history
+// of a channel.
+type GetHistoryFunc func(id lnwire.ShortChannelID) (*ChannelHistory, error)
 
 // NewReputationMonitor is a function signature for a constructor that creates
 // a new reputation monitor.
-type NewReputationMonitor func(start *DecayingAverageStart) reputationMonitor
-
-// NewRevenueMonitor is a function signature for a constructor that creates
-// a new revenue monitor.
-type NewRevenueMonitor func(start *DecayingAverageStart,
-	chanInfo *ChannelInfo) (revenueMonitor, error)
+type NewReputationMonitor func(channel lnwire.ShortChannelID,
+	info ChannelInfo) (reputationMonitor, error)
 
 type ManagerParams struct {
 	// RevenueWindow is the amount of time that we examine the revenue of
@@ -149,8 +125,7 @@ func (p *ManagerParams) reputationWindow() time.Duration {
 // channel revenue over the window provided, and incoming channel reputation
 // over the window scaled by the multiplier.
 func NewResourceManager(params ManagerParams, clock clock.Clock,
-	lookupReputation LookupReputation,
-	lookupRevenue LookupRevenue, log Logger) (*ResourceManager, error) {
+	channelHistory GetHistoryFunc, log Logger) (*ResourceManager, error) {
 
 	if err := params.validate(); err != nil {
 		return nil, err
@@ -160,55 +135,27 @@ func NewResourceManager(params ManagerParams, clock clock.Clock,
 		channelReputation: make(
 			map[lnwire.ShortChannelID]reputationMonitor,
 		),
-		channelRevenue: make(
-			map[lnwire.ShortChannelID]revenueMonitor,
-		),
 		resolutionPeriod: params.ResolutionPeriod,
-		lookupReputation: lookupReputation,
-		lookupRevenue:    lookupRevenue,
-		newReputationMonitor: func(start *DecayingAverageStart) reputationMonitor {
+		lookupHistory:    channelHistory,
+		newReputationMonitor: func(channel lnwire.ShortChannelID,
+			info ChannelInfo) (reputationMonitor, error) {
+
+			history, err := channelHistory(channel)
+			if err != nil {
+				return nil, err
+			}
+
+			log.Infof("Added new channel reputation: %v with "+
+				"history: %v", channel, history)
+
 			return newReputationTracker(
-				clock, params, log, start,
+				clock, params, log, info, history,
 			)
 		},
-		newRevenueMonitor: func(start *DecayingAverageStart,
-			chanInfo *ChannelInfo) (revenueMonitor, error) {
 
-			return newRevenueTracker(
-				clock, params, chanInfo, log, start,
-			)
-
-		},
 		clock: clock,
 		log:   log,
 	}, nil
-}
-
-// getTargetChannel looks up a channel's revenue record in the reputation
-// manager, creating a new decaying average if one if not found. This function
-// returns a pointer to the map entry which can be used to mutate its
-// underlying value.
-func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
-	chanInfo *ChannelInfo) (revenueMonitor, error) {
-
-	if r.channelRevenue[channel] == nil {
-		revenue, err := r.lookupRevenue(channel)
-		if err != nil {
-			return nil, err
-		}
-
-		r.channelRevenue[channel], err = r.newRevenueMonitor(
-			revenue, chanInfo,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		r.log.Infof("Added new revenue channel: %v with start: %v",
-			channel.ToUint64(), revenue)
-	}
-
-	return r.channelRevenue[channel], nil
 }
 
 // getChannelReputation looks up a channel's reputation tracker in the
@@ -216,43 +163,19 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 // function returns a pointer to the map entry which can be used to mutate its
 // underlying value.
 func (r *ResourceManager) getChannelReputation(
-	channel lnwire.ShortChannelID) (reputationMonitor, error) {
+	channel lnwire.ShortChannelID, info ChannelInfo) (reputationMonitor, error) {
 
 	if r.channelReputation[channel] == nil {
-		startValue, err := r.lookupReputation(channel)
+		var err error
+		r.channelReputation[channel], err = r.newReputationMonitor(
+			channel, info,
+		)
 		if err != nil {
 			return nil, err
 		}
-
-		r.channelReputation[channel] = r.newReputationMonitor(
-			startValue,
-		)
-
-		r.log.Infof("Adding new channel reputation: %v with start: %v",
-			channel.ToUint64(), startValue)
 	}
 
 	return r.channelReputation[channel], nil
-}
-
-// sufficientReputation returns a reputation check that is used to determine
-// whether the forwarding peer has sufficient reputation to forward the
-// proposed htlc over the outgoing channel that they have requested.
-func (r *ResourceManager) sufficientReputation(htlc *ProposedHTLC,
-	outgoingChannelRevenue float64) (*ReputationCheck, error) {
-
-	incomingChannel, err := r.getChannelReputation(htlc.IncomingChannel)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ReputationCheck{
-		IncomingReputation: incomingChannel.IncomingReputation(),
-		OutgoingRevenue:    outgoingChannelRevenue,
-		HTLCRisk: outstandingRisk(
-			float64(r.params.BlockTime), htlc, r.resolutionPeriod,
-		),
-	}, nil
 }
 
 type htlcIdxTimestamp struct {
@@ -275,7 +198,7 @@ func (r *htlcIdxTimestamp) Less(other queue.PriorityQueueItem) bool {
 // If it returns false, it assumes that the HTLC will be failed back and does
 // not expect any further resolution notification.
 func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
-	chanOutInfo *ChannelInfo) (*ForwardDecision, error) {
+	chanInInfo, chanOutInfo ChannelInfo) (*ForwardDecision, error) {
 
 	// Validate the HTLC amount. When LND intercepts, it hasn't yet
 	// checked anything about the HTLC so this value could be manipulated.
@@ -286,39 +209,61 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	r.Lock()
 	defer r.Unlock()
 
-	incomingChannel, err := r.getChannelReputation(htlc.IncomingChannel)
+	// First get the incoming/outgoing pair's reputation.
+	incomingChannelRep, err := r.getChannelReputation(htlc.IncomingChannel, chanInInfo)
 	if err != nil {
 		return nil, err
 	}
 
-        // TODO: add outgoingChannelRep
-
-	outgoingChannel, err := r.getTargetChannel(
-		htlc.OutgoingChannel, chanOutInfo,
-	)
+	// Next, get the outgoing/incoming pair's reputation.
+	outgoingChannelRep, err := r.getChannelReputation(htlc.OutgoingChannel, chanOutInfo)
 	if err != nil {
 		return nil, err
 	}
 
-        // TODO: add incomingChannelRep
+	reputation := ReputationCheck{
+		IncomingChannel: incomingChannelRep.Reputation(true),
+		OutgoingChannel: outgoingChannelRep.Reputation(false),
+		HTLCRisk: OutstandingRisk(
+			float64(r.params.BlockTime), htlc,
+			r.params.ResolutionPeriod,
+		),
+	}
 
-        // TODO: get reputation based on both directions
-
-	// Get a forwarding decision from the outgoing channel, considering
-	// the reputation of the incoming channel.
-	forwardDecision := outgoingChannel.AddInFlight(
-		incomingChannel.IncomingReputation(), htlc,
+	outcome := outgoingChannelRep.MayAddOutgoing(
+		reputation, htlc.OutgoingAmount,
+		htlc.IncomingEndorsed == EndorsementTrue,
 	)
 
-	// If we do proceed with the forward, then add it to our incoming
-	// link, tracking our outgoing endorsement status.
-	if err := incomingChannel.AddIncomingInFlight(
-		htlc, forwardDecision.ForwardOutcome,
+	// Always add the HTLC to our incoming in flight tracking. It's already
+	// locked in on our incoming link when we intercept it, and we'll want
+	// to resolve it when we get a notification that it's been removed.
+	err = incomingChannelRep.AddIncomingInFlight(htlc, outcome)
+	if err != nil {
+		return nil, err
+	}
+
+	// If we're not supposed to forward the HTLC, we won't add it to our
+	// outgoing link.
+	if outcome.NoForward() {
+		return &ForwardDecision{
+			ReputationCheck: reputation,
+			ForwardOutcome:  outcome,
+		}, nil
+	}
+
+	// Otherwise, track the HTLC on the outgoing link and return this
+	// outcome.
+	if err := outgoingChannelRep.AddOutgoingInFlight(
+		htlc, outcome == ForwardOutcomeEndorsed,
 	); err != nil {
 		return nil, err
 	}
 
-	return &forwardDecision, nil
+	return &ForwardDecision{
+		ReputationCheck: reputation,
+		ForwardOutcome:  outcome,
+	}, nil
 }
 
 // ResolveHTLC updates the reputation manager's state to reflect the
@@ -338,25 +283,30 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	if incomingChannel == nil {
 		return nil, fmt.Errorf("Incoming success=%v %w: %v(%v) -> %v(%v)",
 			htlc.Success, ErrChannelNotFound,
-			htlc.IncomingChannel.ToUint64(),
-			htlc.IncomingIndex, htlc.OutgoingChannel.ToUint64(),
+			htlc.IncomingChannel,
+			htlc.IncomingIndex, htlc.OutgoingChannel,
 			htlc.OutgoingIndex,
 		)
 	}
 
-	// Resolve the HTLC on the incoming channel. If it's not found, it's
-	// possible that we only started tracking after the HTLC was forwarded
-	// so we log the event and return without error.
-	inFlight, err := incomingChannel.ResolveInFlight(htlc)
+	// We always add the HTLC to the incoming channel, so we resolve it
+	// on our incoming link.
+	inFlight, err := incomingChannel.ResolveIncoming(htlc)
 	if err != nil {
 		return nil, err
 	}
 
-	// If the htlc was not assigned any outgoing resources, then it would
-	// not have been allocated any resources on our outgoing link (it is
-	// expected to have been failed back), so we can exit here.
-	if inFlight.OutgoingDecision == ForwardOutcomeNoResources {
+	// If we didn't forward the HTLC, then we don't need to take any action
+	// on the outgoing link.
+	if inFlight.OutgoingDecision.NoForward() {
 		return inFlight, nil
+	}
+
+	outgoingChannelRep := r.channelReputation[htlc.OutgoingChannel]
+	if err := outgoingChannelRep.ResolveOutgoing(
+		inFlight, htlc,
+	); err != nil {
+		return nil, err
 	}
 
 	// It's possible that after we intercepted the HTLC it was forwarded
@@ -367,21 +317,6 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 		r.log.Debugf("Non-strict forwarding: %v used instead of %v",
 			htlc.OutgoingChannel, inFlight.OutgoingChannel)
 	}
-
-	// Update state on the outgoing channel as well, likewise if we can't
-	// find the channel we're receiving a resolution that we didn't catch
-	// on the add. We use the outgoing channel specified by the in-flight
-	// HTLC, as that's where we added the in-flight HTLC.
-	outgoingChannel := r.channelRevenue[inFlight.OutgoingChannel]
-	if outgoingChannel == nil {
-		return nil, fmt.Errorf("Outgoing success=%v %w: %v(%v) -> %v(%v)",
-			htlc.Success, ErrChannelNotFound,
-			htlc.IncomingChannel.ToUint64(),
-			htlc.IncomingIndex,
-			htlc.OutgoingChannel.ToUint64(),
-			htlc.OutgoingIndex)
-	}
-	outgoingChannel.ResolveInFlight(htlc, inFlight)
 
 	return inFlight, nil
 }

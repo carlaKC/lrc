@@ -46,16 +46,15 @@ func addReputationHtlc(clock clock.Clock, scid lnwire.ShortChannelID,
 	return reputationAvg, nil
 }
 
-// BootstrapReputation processes a set of forwards where we are the incoming
-// link and returns a start value for our reputation decaying average (or nil
-// if there is no history).
-func BootstrapReputation(scid lnwire.ShortChannelID, params ManagerParams,
-	history []*ForwardedHTLC, clock clock.Clock) (*DecayingAverageStart,
+// BootstrapHistory processes a set of htlc forwards for a channel and builds
+// up its reputation history.
+func BootstrapHistory(scid lnwire.ShortChannelID, params ManagerParams,
+	history []*ForwardedHTLC, clock clock.Clock) (*ChannelHistory,
 	error) {
 
 	// Zero history is a valid input, we just return no values.
 	if len(history) == 0 {
-		return nil, nil
+		return &ChannelHistory{}, nil
 	}
 
 	// We sort by resolved timestamp so that we can replay the values for
@@ -66,22 +65,73 @@ func BootstrapReputation(scid lnwire.ShortChannelID, params ManagerParams,
 		)
 	})
 
-	var reputationAvg *decayingAverage
+	var (
+		incomingReputation   *decayingAverage
+		outgoingReputation   *decayingAverage
+		bidirectionalRevenue *decayingAverage
+		err                  error
+	)
 
 	for _, h := range history {
-		var err error
-		reputationAvg, err = addReputationHtlc(
-			clock, scid, h, params, reputationAvg,
+		switch {
+		// If the HTLC was forwarded to us, add to incoming reputation
+		// and bidirectional revenue.
+		case h.IncomingChannel == scid:
+			incomingReputation, err = addReputationHtlc(
+				clock, scid, h, params, incomingReputation,
+			)
+			if err != nil {
+				return nil, err
+			}
+
+		// If the HTLC was forwarded out through us, add to outgoing
+		// reputation and bidirectional revenue.
+		case h.OutgoingChannel == scid:
+			outgoingReputation, err = addReputationHtlc(
+				clock, scid, h, params, outgoingReputation,
+			)
+
+		default:
+			return nil, fmt.Errorf("history for: "+
+				"%v contains forward that does not belong "+
+				"to channel (%v -> %v)", scid,
+				h.InFlightHTLC.IncomingChannel,
+				h.Resolution.OutgoingChannel)
+		}
+
+		bidirectionalRevenue, err = addRevenueHtlc(
+			clock, scid, params, h, bidirectionalRevenue,
 		)
+
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return &DecayingAverageStart{
-		Value:      reputationAvg.getValue(),
-		LastUpdate: reputationAvg.lastUpdate,
-	}, nil
+	channelHistory := &ChannelHistory{}
+
+	if incomingReputation != nil {
+		channelHistory.IncomingReputation = &DecayingAverageStart{
+			Value:      incomingReputation.getValue(),
+			LastUpdate: incomingReputation.lastUpdate,
+		}
+	}
+
+	if outgoingReputation != nil {
+		channelHistory.OutgoingReputation = &DecayingAverageStart{
+			Value:      outgoingReputation.getValue(),
+			LastUpdate: outgoingReputation.lastUpdate,
+		}
+	}
+
+	if bidirectionalRevenue != nil {
+		channelHistory.Revenue = &DecayingAverageStart{
+			Value:      bidirectionalRevenue.getValue(),
+			LastUpdate: bidirectionalRevenue.lastUpdate,
+		}
+	}
+
+	return channelHistory, nil
 }
 
 func addRevenueHtlc(clock clock.Clock, scid lnwire.ShortChannelID,
@@ -114,44 +164,6 @@ func addRevenueHtlc(clock clock.Clock, scid lnwire.ShortChannelID,
 	}
 
 	return revenueAvg, nil
-}
-
-// BootstrapRevenue processes a set of forwards where we are the outgoing link
-// and returns a start value for our revenue decaying average (or nil if there
-// is no history).
-func BootstrapRevenue(scid lnwire.ShortChannelID, params ManagerParams,
-	history []*ForwardedHTLC, clock clock.Clock) (*DecayingAverageStart,
-	error) {
-
-	// Zero history is a valid input, we just return no values.
-	if len(history) == 0 {
-		return nil, nil
-	}
-
-	// We sort by resolved timestamp so that we can replay the values for
-	// our decaying average.
-	sort.Slice(history, func(i, j int) bool {
-		return history[i].Resolution.TimestampSettled.Before(
-			history[j].Resolution.TimestampSettled,
-		)
-	})
-
-	var revenueAvg *decayingAverage
-
-	for _, h := range history {
-		var err error
-		revenueAvg, err = addRevenueHtlc(
-			clock, scid, params, h, revenueAvg,
-		)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return &DecayingAverageStart{
-		Value:      revenueAvg.getValue(),
-		LastUpdate: revenueAvg.lastUpdate,
-	}, nil
 }
 
 type NetworkForward struct {

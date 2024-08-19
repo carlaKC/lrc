@@ -70,18 +70,22 @@ type MockRevenue struct {
 	mock.Mock
 }
 
-func (m *MockRevenue) AddInFlight(incomingReputation IncomingReputation,
-	htlc *ProposedHTLC) ForwardDecision {
+func (m *MockRevenue) AddInFlight(htlc *ProposedHTLC,
+	sufficientReputation bool) ForwardOutcome {
 
-	args := m.Called(incomingReputation, htlc)
+	args := m.Called(htlc, sufficientReputation)
 
-	return args.Get(0).(ForwardDecision)
+	return args.Get(0).(ForwardOutcome)
 }
 
 func (m *MockRevenue) ResolveInFlight(htlc *ResolvedHTLC,
 	inFlight *InFlightHTLC) error {
 
 	return m.Called(htlc, inFlight).Error(0)
+}
+
+func (m *MockRevenue) Revenue() float64 {
+	return m.Called().Get(0).(float64)
 }
 
 type MockReputation struct {
@@ -96,16 +100,22 @@ func (m *MockReputation) AddIncomingInFlight(htlc *ProposedHTLC,
 	return args.Error(0)
 }
 
-func (m *MockReputation) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
-	error) {
-
+func (m *MockReputation) AddOutgoingInFlight(htlc *ProposedHTLC) error {
 	args := m.Called(htlc)
+
+	return args.Error(0)
+}
+
+func (m *MockReputation) ResolveIncoming(htlc *ResolvedHTLC,
+	incoming bool) (*InFlightHTLC, error) {
+
+	args := m.Called(htlc, incoming)
 
 	return args.Get(0).(*InFlightHTLC), args.Error(1)
 }
 
-func (m *MockReputation) IncomingReputation() IncomingReputation {
-	args := m.Called()
+func (m *MockReputation) Reputation(incoming bool) Reputation {
+	args := m.Called(incoming)
 
-	return args.Get(0).(IncomingReputation)
+	return args.Get(0).(Reputation)
 }
