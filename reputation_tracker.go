@@ -119,6 +119,11 @@ func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
 func (r *reputationTracker) inFlightHTLCRisk() float64 {
 	var inFlightRisk float64
 	for _, htlc := range r.inFlightHTLCs {
+		// Only endorsed HTLCs count towards our in flight risk.
+		if htlc.IncomingEndorsed != EndorsementTrue {
+			continue
+		}
+
 		inFlightRisk += outstandingRisk(
 			r.blockTime, htlc.ProposedHTLC, r.resolutionPeriod,
 		)
