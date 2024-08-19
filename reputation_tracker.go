@@ -64,9 +64,9 @@ func (r *reputationTracker) IncomingReputation() IncomingReputation {
 	}
 }
 
-// AddInFlight updates the outgoing channel's view to include a new in flight
-// HTLC.
-func (r *reputationTracker) AddInFlight(htlc *ProposedHTLC,
+// AddIncomingInFlight updates the outgoing channel's view to include a new in
+// flight HTLC.
+func (r *reputationTracker) AddIncomingInFlight(htlc *ProposedHTLC,
 	outgoingDecision ForwardOutcome) error {
 
 	inFlightHTLC := &InFlightHTLC{

@@ -117,7 +117,7 @@ func TestResourceManager(t *testing.T) {
 	chan200Outgoing.On("AddInFlight", incomingRep, htlc1).Once().Return(
 		ForwardDecision{ForwardOutcome: ForwardOutcomeUnendorsed},
 	)
-	chan100Incoming.On("AddInFlight", htlc1, ForwardOutcomeUnendorsed).Once().Return(nil)
+	chan100Incoming.On("AddIncomingInFlight", htlc1, ForwardOutcomeUnendorsed).Once().Return(nil)
 
 	f, err := mgr.ForwardHTLC(htlc1, chanOutInfo)
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestResourceManager(t *testing.T) {
 	chan200Outgoing.On("AddInFlight", incomingRep, htlc2).Once().Return(
 		ForwardDecision{ForwardOutcome: ForwardOutcomeNoResources},
 	)
-	chan100Incoming.On("AddInFlight", htlc2, ForwardOutcomeNoResources).Once().Return(nil)
+	chan100Incoming.On("AddIncomingInFlight", htlc2, ForwardOutcomeNoResources).Once().Return(nil)
 
 	f, err = mgr.ForwardHTLC(htlc2, chanOutInfo)
 	require.NoError(t, err)

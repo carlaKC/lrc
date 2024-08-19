@@ -306,7 +306,7 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 
 	// If we do proceed with the forward, then add it to our incoming
 	// link, tracking our outgoing endorsement status.
-	if err := incomingChannel.AddInFlight(
+	if err := incomingChannel.AddIncomingInFlight(
 		htlc, forwardDecision.ForwardOutcome,
 	); err != nil {
 		return nil, err

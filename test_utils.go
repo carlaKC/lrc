@@ -88,7 +88,7 @@ type MockReputation struct {
 	mock.Mock
 }
 
-func (m *MockReputation) AddInFlight(htlc *ProposedHTLC,
+func (m *MockReputation) AddIncomingInFlight(htlc *ProposedHTLC,
 	outgoingDecision ForwardOutcome) error {
 
 	args := m.Called(htlc, outgoingDecision)

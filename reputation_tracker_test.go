@@ -95,7 +95,7 @@ func assertHtlcLifecycle(t *testing.T, tracker *reputationTracker, idx int,
 	// Note, we're just setting the outgoing endorsed to whatever our
 	// incoming endorsed is - we're not testing reputation here.
 	htlc0 := mockProposedHtlc(100, 200, idx, incomingEndorsed)
-	err := tracker.AddInFlight(htlc0, outgoingDecision)
+	err := tracker.AddIncomingInFlight(htlc0, outgoingDecision)
 	require.NoError(t, err)
 	require.Len(t, tracker.incomingInFlight, 1)
 
@@ -113,11 +113,11 @@ func TestReputationTrackerErrs(t *testing.T) {
 	)
 
 	htlc0 := mockProposedHtlc(100, 200, 0, true)
-	err := tracker.AddInFlight(htlc0, ForwardOutcomeEndorsed)
+	err := tracker.AddIncomingInFlight(htlc0, ForwardOutcomeEndorsed)
 	require.NoError(t, err)
 
 	// Assert that we error on duplicate htlcs.
-	err = tracker.AddInFlight(htlc0, ForwardOutcomeEndorsed)
+	err = tracker.AddIncomingInFlight(htlc0, ForwardOutcomeEndorsed)
 	require.ErrorIs(t, err, ErrDuplicateIndex)
 
 	htlc1 := mockProposedHtlc(100, 200, 1, true)
@@ -226,7 +226,7 @@ func TestInFlightHTLCs(t *testing.T) {
 	// When we have an endorsed htlc, there should be in-flight risk
 	// associated.
 	htlc0 := mockProposedHtlc(100, 200, 0, true)
-	err := tracker.AddInFlight(htlc0, ForwardOutcomeEndorsed)
+	err := tracker.AddIncomingInFlight(htlc0, ForwardOutcomeEndorsed)
 	require.NoError(t, err)
 
 	r0 := tracker.IncomingReputation()
@@ -234,7 +234,7 @@ func TestInFlightHTLCs(t *testing.T) {
 
 	// An unendorsed htlc should not change the in-flight risk.
 	htlc1 := mockProposedHtlc(100, 200, 1, false)
-	err = tracker.AddInFlight(htlc1, ForwardOutcomeUnendorsed)
+	err = tracker.AddIncomingInFlight(htlc1, ForwardOutcomeUnendorsed)
 	require.NoError(t, err)
 
 	r1 := tracker.IncomingReputation()

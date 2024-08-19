@@ -147,9 +147,10 @@ type resourceBucketer interface {
 // reputationMonitor is an interface that represents the tracking of reputation
 // for links forwarding htlcs.
 type reputationMonitor interface {
-	// AddInFlight updates the reputation monitor for an incoming link to
-	// reflect that it currently has an outstanding forwarded htlc.
-	AddInFlight(htlc *ProposedHTLC, outgoingDecision ForwardOutcome) error
+	// AddIncomingFlight updates the reputation monitor for an incoming
+	// link to reflect that it currently has an outstanding forwarded htlc.
+	AddIncomingInFlight(htlc *ProposedHTLC,
+		outgoingDecision ForwardOutcome) error
 
 	// ResolveInFlight updates the reputation monitor to resolve a
 	// previously in-flight htlc.
