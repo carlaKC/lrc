@@ -30,7 +30,7 @@ func newReputationTracker(clock clock.Clock, params ManagerParams,
 		revenue: newDecayingAverage(
 			clock, params.reputationWindow(), startValue,
 		),
-		inFlightHTLCs:    make(map[int]*InFlightHTLC),
+		incomingInFlight: make(map[int]*InFlightHTLC),
 		blockTime:        float64(params.BlockTime),
 		resolutionPeriod: params.ResolutionPeriod,
 		log:              log,
@@ -42,8 +42,9 @@ type reputationTracker struct {
 	// earned the local node as the incoming edge for HTLC forwards.
 	revenue *decayingAverage
 
-	// inFlightHTLCs provides a map of in-flight HTLCs, keyed by htlc id.
-	inFlightHTLCs map[int]*InFlightHTLC
+	// incomingInFlight provides a map of in-flight HTLCs, keyed by htlc id
+	// on the incoming link.
+	incomingInFlight map[int]*InFlightHTLC
 
 	// blockTime is the expected time to find a block, surfaced to account
 	// for simulation scenarios where this isn't 10 minutes.
@@ -75,12 +76,12 @@ func (r *reputationTracker) AddInFlight(htlc *ProposedHTLC,
 	}
 
 	// Sanity check whether the HTLC is already present.
-	if _, ok := r.inFlightHTLCs[htlc.IncomingIndex]; ok {
+	if _, ok := r.incomingInFlight[htlc.IncomingIndex]; ok {
 		return fmt.Errorf("%w: %v", ErrDuplicateIndex,
 			htlc.IncomingIndex)
 	}
 
-	r.inFlightHTLCs[htlc.IncomingIndex] = inFlightHTLC
+	r.incomingInFlight[htlc.IncomingIndex] = inFlightHTLC
 
 	return nil
 }
@@ -92,14 +93,14 @@ func (r *reputationTracker) AddInFlight(htlc *ProposedHTLC,
 func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
 	error) {
 
-	inFlight, ok := r.inFlightHTLCs[htlc.IncomingIndex]
+	inFlight, ok := r.incomingInFlight[htlc.IncomingIndex]
 	if !ok {
 		return nil, fmt.Errorf("%w: %v(%v) -> %v(%v)", ErrResolutionNotFound,
 			htlc.IncomingChannel.ToUint64(), htlc.IncomingIndex,
 			htlc.OutgoingChannel.ToUint64(), htlc.OutgoingIndex)
 	}
 
-	delete(r.inFlightHTLCs, inFlight.IncomingIndex)
+	delete(r.incomingInFlight, inFlight.IncomingIndex)
 
 	effectiveFees := effectiveFees(
 		r.resolutionPeriod, htlc.TimestampSettled, inFlight,
@@ -118,7 +119,7 @@ func (r *reputationTracker) ResolveInFlight(htlc *ResolvedHTLC) (*InFlightHTLC,
 // in-flight HTLCs from a specific channel.
 func (r *reputationTracker) inFlightHTLCRisk() float64 {
 	var inFlightRisk float64
-	for _, htlc := range r.inFlightHTLCs {
+	for _, htlc := range r.incomingInFlight {
 		// Only endorsed HTLCs count towards our in flight risk.
 		if htlc.IncomingEndorsed != EndorsementTrue {
 			continue

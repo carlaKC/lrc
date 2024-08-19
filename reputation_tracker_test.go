@@ -17,7 +17,7 @@ func TestReputationTracker(t *testing.T) {
 	tracker := newReputationTracker(
 		clock, testParams, &TestLogger{}, nil,
 	)
-	require.Len(t, tracker.inFlightHTLCs, 0)
+	require.Len(t, tracker.incomingInFlight, 0)
 
 	totalReputation := 0
 
@@ -97,12 +97,12 @@ func assertHtlcLifecycle(t *testing.T, tracker *reputationTracker, idx int,
 	htlc0 := mockProposedHtlc(100, 200, idx, incomingEndorsed)
 	err := tracker.AddInFlight(htlc0, outgoingDecision)
 	require.NoError(t, err)
-	require.Len(t, tracker.inFlightHTLCs, 1)
+	require.Len(t, tracker.incomingInFlight, 1)
 
 	res0 := resolutionForProposed(htlc0, settle, testTime.Add(resolveTime))
 	_, err = tracker.ResolveInFlight(res0)
 	require.NoError(t, err)
-	require.Len(t, tracker.inFlightHTLCs, 0)
+	require.Len(t, tracker.incomingInFlight, 0)
 }
 
 // TestReputationTrackerErrs tests the error cases for a reputation tracker.
