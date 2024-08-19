@@ -46,8 +46,8 @@ func main() {
 
 	network, err := lrc.BootstrapNetwork(
 		lrc.ManagerParams{
-			RevenueWindow:        time.Hour * 24 * 7 * 4,
-			ReputationMultiplier: 12,
+			RevenueWindow:        time.Hour * 24 * 14,
+			ReputationMultiplier: 24,
 			ProtectedPercentage:  50,
 			ResolutionPeriod:     time.Second * 90,
 			BlockTime:            5,
@@ -183,9 +183,22 @@ type networkReputation struct {
 	node           string
 	chanIn         uint64
 	chanOut        uint64
-	reputation     float64
-	revenue        float64
-	goodReputation bool
+	incomingRepAmt float64
+	incomingRevAmt float64
+	outgoingRepAmt float64
+	outgoingRevAmt float64
+}
+
+func (n networkReputation) incomingReputation() bool {
+	return n.incomingRepAmt > n.incomingRevAmt
+}
+
+func (n networkReputation) outgoingReputation() bool {
+	return n.outgoingRepAmt > n.outgoingRevAmt
+}
+
+func (n networkReputation) goodReputation() bool {
+	return n.incomingReputation() && n.outgoingReputation()
 }
 
 func getNetworkData(data map[string]*lrc.ChannelBootstrap,
@@ -240,22 +253,36 @@ func getNetworkData(data map[string]*lrc.ChannelBootstrap,
 					continue
 				}
 
-				outgoingRevenue := 0.0
+				incomingRevenue := 0.0
 				if revenue != nil {
-					outgoingRevenue = revenue.DebugValue()
+					incomingRevenue = revenue.DebugValue()
+				}
+
+				// Get the reputation of the outgoing channel.
+				outgoingReputation := 0.0
+				outRepAvg, _ := channels.Incoming[chanOut]
+				if outRepAvg != nil {
+					outgoingReputation = outRepAvg.DebugValue()
+				}
+
+				outgoingRevenue := 0.0
+				inRevAvg, _ := channels.Outgoing[chanIn]
+				if inRevAvg != nil {
+					outgoingRevenue = inRevAvg.DebugValue()
 				}
 
 				record := networkReputation{
 					node:           alias,
 					chanIn:         chanIn.ToUint64(),
 					chanOut:        chanOut.ToUint64(),
-					reputation:     incomingReputation,
-					revenue:        outgoingRevenue,
-					goodReputation: incomingReputation > outgoingRevenue,
+					incomingRepAmt: incomingReputation,
+					incomingRevAmt: incomingRevenue,
+					outgoingRepAmt: outgoingReputation,
+					outgoingRevAmt: outgoingRevenue,
 				}
 
 				pairs++
-				if record.goodReputation {
+				if record.goodReputation() {
 					goodReputation++
 				}
 				records = append(records, record)
@@ -264,8 +291,8 @@ func getNetworkData(data map[string]*lrc.ChannelBootstrap,
 
 		goodRepPairs += goodReputation
 		totalPairs += pairs
-		fmt.Printf("Node: %v has %v/%v good reputation pairs\n",
-			alias, goodReputation, pairs)
+		fmt.Printf("Node: %v has %v/%v good reputation pairs (%v%%)\n",
+			alias, goodReputation, pairs, (goodReputation * 100 / pairs))
 	}
 
 	fmt.Printf("Total pairs: %v, with good reputation: %v (%v %%)\n",
@@ -289,7 +316,7 @@ func writeNetworkData(path string, records []networkReputation) error {
 	defer writer.Flush()
 
 	// Write the header row
-	header := []string{"node", "chan_in", "chan_out", "reputation", "revenue", "has_rep"}
+	header := []string{"node", "chan_in", "chan_out", "reputation_in", "revenue_in", "reputation_out", "revenue_out", "good_rep"}
 	if err := writer.Write(header); err != nil {
 		return fmt.Errorf("failed to write header: %v", err)
 	}
@@ -298,9 +325,11 @@ func writeNetworkData(path string, records []networkReputation) error {
 			record.node,
 			strconv.FormatUint(record.chanIn, 10),
 			strconv.FormatUint(record.chanOut, 10),
-			fmt.Sprintf("%f", record.reputation),
-			fmt.Sprintf("%f", record.revenue),
-			strconv.FormatBool(record.goodReputation),
+			fmt.Sprintf("%f", record.incomingRepAmt),
+			fmt.Sprintf("%f", record.incomingRevAmt),
+			fmt.Sprintf("%f", record.outgoingRepAmt),
+			fmt.Sprintf("%f", record.outgoingRevAmt),
+			strconv.FormatBool(record.goodReputation()),
 		}
 		if err := writer.Write(row); err != nil {
 			return fmt.Errorf("failed to write record: %v", err)
