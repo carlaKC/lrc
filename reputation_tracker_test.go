@@ -215,3 +215,37 @@ func TestEffectiveFees(t *testing.T) {
 		require.Equal(t, testCase.effectiveFee, actual)
 	}
 }
+
+// TestInFlightHTLCs tests the impact of in-flight HTLCs on reputation.
+func TestInFlightHTLCs(t *testing.T) {
+	clock := clock.NewTestClock(testTime)
+	tracker := newReputationTracker(
+		clock, testParams, &TestLogger{}, nil,
+	)
+
+	// When we have an endorsed htlc, there should be in-flight risk
+	// associated.
+	htlc0 := mockProposedHtlc(100, 200, 0, true)
+	err := tracker.AddInFlight(htlc0, ForwardOutcomeEndorsed)
+	require.NoError(t, err)
+
+	r0 := tracker.IncomingReputation()
+	require.NotZero(t, r0.InFlightRisk)
+
+	// An unendorsed htlc should not change the in-flight risk.
+	htlc1 := mockProposedHtlc(100, 200, 1, false)
+	err = tracker.AddInFlight(htlc1, ForwardOutcomeUnendorsed)
+	require.NoError(t, err)
+
+	r1 := tracker.IncomingReputation()
+	require.Equal(t, r0.InFlightRisk, r1.InFlightRisk)
+
+	// Once the endorsed htlc is resolved, there is zero in flight risk
+	// even though there's still one unendorsed htlc.
+	res0 := resolutionForProposed(htlc0, true, testTime.Add(time.Second))
+	_, err = tracker.ResolveInFlight(res0)
+	require.NoError(t, err)
+
+	r0 = tracker.IncomingReputation()
+	require.Zero(t, r0.InFlightRisk)
+}
