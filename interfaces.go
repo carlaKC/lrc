@@ -160,9 +160,9 @@ type reputationMonitor interface {
 	IncomingReputation() IncomingReputation
 }
 
-// targetMonitor is an interface that represents the tracking of forwading
+// revenueMonitor is an interface that represents the tracking of forwading
 // revenues for targeted outgoing links.
-type targetMonitor interface {
+type revenueMonitor interface {
 	// AddInFlight proposes the addition of a htlc to the outgoing channel,
 	// returning a forwarding decision for the htlc based on its
 	// endorsement and the reputation of the incoming link.

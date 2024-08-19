@@ -42,7 +42,7 @@ func setup(t *testing.T, mockDeps *mockDeps) (*clock.TestClock,
 	require.NoError(t, err)
 
 	// Replace constructors with our mocks.
-	r.newTargetMonitor = mockDeps.newTargetMonitor
+	r.newRevenueMonitor = mockDeps.newRevenueMonitor
 	r.newReputationMonitor = mockDeps.newReputationMonitor
 
 	return testClock, r
@@ -54,11 +54,11 @@ type mockDeps struct {
 	mock.Mock
 }
 
-func (m *mockDeps) newTargetMonitor(start *DecayingAverageStart,
-	chanInfo *ChannelInfo) (targetMonitor, error) {
+func (m *mockDeps) newRevenueMonitor(start *DecayingAverageStart,
+	chanInfo *ChannelInfo) (revenueMonitor, error) {
 
 	args := m.Called(start, chanInfo)
-	return args.Get(0).(targetMonitor), args.Error(1)
+	return args.Get(0).(revenueMonitor), args.Error(1)
 }
 
 func (m *mockDeps) newReputationMonitor(
@@ -96,13 +96,13 @@ func TestResourceManager(t *testing.T) {
 	chan100Incoming := &MockReputation{}
 	defer chan100Incoming.AssertExpectations(t)
 
-	chan200Outgoing := &MockTarget{}
+	chan200Outgoing := &MockRevenue{}
 	defer chan200Outgoing.AssertExpectations(t)
 
 	deps.On("newReputationMonitor", mock.Anything).Once().Return(
 		chan100Incoming,
 	)
-	deps.On("newTargetMonitor", mock.Anything, chanOutInfo).Once().Return(
+	deps.On("newRevenueMonitor", mock.Anything, chanOutInfo).Once().Return(
 		chan200Outgoing, nil,
 	)
 

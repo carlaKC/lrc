@@ -7,12 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTargetChannelTracker tests basic functionality of our target tracker,
+// TestRevenueTracker tests basic functionality of our revenue tracker,
 // mocking our bucketing functionality as it's tested elsewhere.
-func TestTargetChannelTracker(t *testing.T) {
-
+func TestRevenueTracker(t *testing.T) {
 	testClock := clock.NewTestClock(testTime)
-	tracker, err := newTargetChannelTracker(
+	tracker, err := newRevenueTracker(
 		testClock, testParams, &ChannelInfo{}, &TestLogger{}, nil,
 	)
 	require.NoError(t, err)

@@ -65,12 +65,12 @@ func resolutionForProposed(proposed *ProposedHTLC, success bool,
 	}
 }
 
-// MockTarget mocks out revenueMontior.
-type MockTarget struct {
+// MockRevenue mocks out revenueMontior.
+type MockRevenue struct {
 	mock.Mock
 }
 
-func (m *MockTarget) AddInFlight(incomingReputation IncomingReputation,
+func (m *MockRevenue) AddInFlight(incomingReputation IncomingReputation,
 	htlc *ProposedHTLC) ForwardDecision {
 
 	args := m.Called(incomingReputation, htlc)
@@ -78,7 +78,7 @@ func (m *MockTarget) AddInFlight(incomingReputation IncomingReputation,
 	return args.Get(0).(ForwardDecision)
 }
 
-func (m *MockTarget) ResolveInFlight(htlc *ResolvedHTLC,
+func (m *MockRevenue) ResolveInFlight(htlc *ResolvedHTLC,
 	inFlight *InFlightHTLC) error {
 
 	return m.Called(htlc, inFlight).Error(0)

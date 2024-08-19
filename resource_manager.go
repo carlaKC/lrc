@@ -44,9 +44,9 @@ type ResourceManager struct {
 	//   node that have not yet resolved.
 	channelReputation map[lnwire.ShortChannelID]reputationMonitor
 
-	// targetChannels tracks the routing revenue that channels have
+	// channelRevenue tracks the routing revenue that channels have
 	// earned the local node for both incoming and outgoing HTLCs.
-	targetChannels map[lnwire.ShortChannelID]targetMonitor
+	channelRevenue map[lnwire.ShortChannelID]revenueMonitor
 
 	// resolutionPeriod is the period of time that is considered reasonable
 	// for a htlc to resolve in.
@@ -64,9 +64,9 @@ type ResourceManager struct {
 	// out for mocking purposes in tests.
 	newReputationMonitor NewReputationMonitor
 
-	// newTargetMonitor creates a new target monitor, pull out for mocking
+	// newRevenueMonitor creates a new revenue monitor, pull out for mocking
 	// in tests.
-	newTargetMonitor NewTargetMonitor
+	newRevenueMonitor NewRevenueMonitor
 
 	clock clock.Clock
 
@@ -94,10 +94,10 @@ type LookupRevenue func(id lnwire.ShortChannelID) (*DecayingAverageStart,
 // a new reputation monitor.
 type NewReputationMonitor func(start *DecayingAverageStart) reputationMonitor
 
-// NewTargetMonitor is a function signature for a constructor that creates
-// a new target channel revenue monitor.
-type NewTargetMonitor func(start *DecayingAverageStart,
-	chanInfo *ChannelInfo) (targetMonitor, error)
+// NewRevenueMonitor is a function signature for a constructor that creates
+// a new revenue monitor.
+type NewRevenueMonitor func(start *DecayingAverageStart,
+	chanInfo *ChannelInfo) (revenueMonitor, error)
 
 type ManagerParams struct {
 	// RevenueWindow is the amount of time that we examine the revenue of
@@ -160,8 +160,8 @@ func NewResourceManager(params ManagerParams, clock clock.Clock,
 		channelReputation: make(
 			map[lnwire.ShortChannelID]reputationMonitor,
 		),
-		targetChannels: make(
-			map[lnwire.ShortChannelID]targetMonitor,
+		channelRevenue: make(
+			map[lnwire.ShortChannelID]revenueMonitor,
 		),
 		resolutionPeriod: params.ResolutionPeriod,
 		lookupReputation: lookupReputation,
@@ -171,10 +171,10 @@ func NewResourceManager(params ManagerParams, clock clock.Clock,
 				clock, params, log, start,
 			)
 		},
-		newTargetMonitor: func(start *DecayingAverageStart,
-			chanInfo *ChannelInfo) (targetMonitor, error) {
+		newRevenueMonitor: func(start *DecayingAverageStart,
+			chanInfo *ChannelInfo) (revenueMonitor, error) {
 
-			return newTargetChannelTracker(
+			return newRevenueTracker(
 				clock, params, chanInfo, log, start,
 			)
 
@@ -189,15 +189,15 @@ func NewResourceManager(params ManagerParams, clock clock.Clock,
 // returns a pointer to the map entry which can be used to mutate its
 // underlying value.
 func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
-	chanInfo *ChannelInfo) (targetMonitor, error) {
+	chanInfo *ChannelInfo) (revenueMonitor, error) {
 
-	if r.targetChannels[channel] == nil {
+	if r.channelRevenue[channel] == nil {
 		revenue, err := r.lookupRevenue(channel)
 		if err != nil {
 			return nil, err
 		}
 
-		r.targetChannels[channel], err = r.newTargetMonitor(
+		r.channelRevenue[channel], err = r.newRevenueMonitor(
 			revenue, chanInfo,
 		)
 		if err != nil {
@@ -208,7 +208,7 @@ func (r *ResourceManager) getTargetChannel(channel lnwire.ShortChannelID,
 			channel.ToUint64(), revenue)
 	}
 
-	return r.targetChannels[channel], nil
+	return r.channelRevenue[channel], nil
 }
 
 // getChannelReputation looks up a channel's reputation tracker in the
@@ -366,7 +366,7 @@ func (r *ResourceManager) ResolveHTLC(htlc *ResolvedHTLC) (*InFlightHTLC,
 	// find the channel we're receiving a resolution that we didn't catch
 	// on the add. We use the outgoing channel specified by the in-flight
 	// HTLC, as that's where we added the in-flight HTLC.
-	outgoingChannel := r.targetChannels[inFlight.OutgoingChannel]
+	outgoingChannel := r.channelRevenue[inFlight.OutgoingChannel]
 	if outgoingChannel == nil {
 		return nil, fmt.Errorf("Outgoing success=%v %w: %v(%v) -> %v(%v)",
 			htlc.Success, ErrChannelNotFound,

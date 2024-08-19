@@ -16,13 +16,13 @@ var (
 		"that should not have been assigned resources")
 )
 
-// Compile time check that targetChannelTracker implements the targetMonitor
+// Compile time check that revenueMonitor implements the revenueMonitor
 // interface.
-var _ targetMonitor = (*targetChannelTracker)(nil)
+var _ revenueMonitor = (*revenueTracker)(nil)
 
-// targetChannelTracker is used to track the revenue and resources of channels
+// revenueTracker is used to track the revenue and resources of channels
 // that are requested as the outgoing link of a forward.
-type targetChannelTracker struct {
+type revenueTracker struct {
 	revenue *decayingAverage
 
 	// blockTime is the expected time to find a block, surfaced to account
@@ -38,9 +38,9 @@ type targetChannelTracker struct {
 	log Logger
 }
 
-func newTargetChannelTracker(clock clock.Clock, params ManagerParams,
+func newRevenueTracker(clock clock.Clock, params ManagerParams,
 	channel *ChannelInfo, log Logger,
-	startValue *DecayingAverageStart) (*targetChannelTracker, error) {
+	startValue *DecayingAverageStart) (*revenueTracker, error) {
 
 	bucket, err := newBucketResourceManager(
 		channel.InFlightLiquidity, channel.InFlightHTLC,
@@ -50,7 +50,7 @@ func newTargetChannelTracker(clock clock.Clock, params ManagerParams,
 		return nil, err
 	}
 
-	return &targetChannelTracker{
+	return &revenueTracker{
 		revenue: newDecayingAverage(
 			clock, params.RevenueWindow, startValue,
 		),
@@ -65,7 +65,7 @@ func newTargetChannelTracker(clock clock.Clock, params ManagerParams,
 // reputation of the incoming link. This function will return a forwarding
 // decision with the details of the reputation decision and the action that
 // was taken for this HTLC considering our resources and its endorsement.
-func (t *targetChannelTracker) AddInFlight(incomingReputation IncomingReputation,
+func (t *revenueTracker) AddInFlight(incomingReputation IncomingReputation,
 	htlc *ProposedHTLC) ForwardDecision {
 
 	// First, assess reputation of the incoming link to decide whether
@@ -107,7 +107,7 @@ func (t *targetChannelTracker) AddInFlight(incomingReputation IncomingReputation
 
 // ResolveInFlight removes a htlc from our internal state, crediting the fees
 // to our channel if it was successful.
-func (t *targetChannelTracker) ResolveInFlight(htlc *ResolvedHTLC,
+func (t *revenueTracker) ResolveInFlight(htlc *ResolvedHTLC,
 	inFlight *InFlightHTLC) error {
 
 	if inFlight.OutgoingDecision == ForwardOutcomeNoResources {
