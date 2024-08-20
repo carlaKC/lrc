@@ -29,59 +29,59 @@ func TestReputationTracker(t *testing.T) {
 	assertHtlcLifecycle(
 		t, tracker, 0, false, false, time.Hour,
 	)
-	require.EqualValues(t, totalReputation, tracker.revenue.getValue())
+	require.EqualValues(t, totalReputation, tracker.incomingRevenue.getValue())
 
 	// Unendorsed - fast failure, no reputation impact
 	assertHtlcLifecycle(
 		t, tracker, 1, false, false, time.Second,
 	)
-	require.EqualValues(t, totalReputation, tracker.revenue.getValue())
+	require.EqualValues(t, totalReputation, tracker.incomingRevenue.getValue())
 
 	// Unendorsed - slow success, no reputation impact
 	assertHtlcLifecycle(
 		t, tracker, 2, false, true, time.Hour,
 	)
-	require.EqualValues(t, totalReputation, tracker.revenue.getValue())
+	require.EqualValues(t, totalReputation, tracker.incomingRevenue.getValue())
 
 	// Unendorsed - fast success, reputation increases by fee
 	totalReputation += mockProposedFee
 	assertHtlcLifecycle(
 		t, tracker, 3, false, true, time.Second*30,
 	)
-	require.EqualValues(t, totalReputation, tracker.revenue.getValue())
+	require.EqualValues(t, totalReputation, tracker.incomingRevenue.getValue())
 
 	// Endorsed, fast failure - no reputation impact
 	assertHtlcLifecycle(
 		t, tracker, 4, true, false, time.Second,
 	)
-	require.EqualValues(t, totalReputation, tracker.revenue.getValue())
+	require.EqualValues(t, totalReputation, tracker.incomingRevenue.getValue())
 
 	// Endorsed, slow failure - reputation decreases by fee (for one period)
 	totalReputation -= mockProposedFee
 	assertHtlcLifecycle(
 		t, tracker, 5, true, false, time.Second*90+1,
 	)
-	require.EqualValues(t, totalReputation, tracker.revenue.getValue())
+	require.EqualValues(t, totalReputation, tracker.incomingRevenue.getValue())
 
 	// Endorsed, fast success - reputation increases by fee
 	totalReputation += mockProposedFee
 	assertHtlcLifecycle(
 		t, tracker, 6, true, true, time.Second,
 	)
-	require.EqualValues(t, totalReputation, tracker.revenue.getValue())
+	require.EqualValues(t, totalReputation, tracker.incomingRevenue.getValue())
 
 	// Endorsed, slow success (one period) - net zero impact
 	assertHtlcLifecycle(
 		t, tracker, 7, true, true, time.Second*90+1,
 	)
-	require.EqualValues(t, totalReputation, tracker.revenue.getValue())
+	require.EqualValues(t, totalReputation, tracker.incomingRevenue.getValue())
 
 	// Endorsed, slow failure (multiple periods) - negative reputation
 	totalReputation -= mockProposedFee * 4
 	assertHtlcLifecycle(
 		t, tracker, 8, true, false, time.Second*90*5,
 	)
-	require.EqualValues(t, totalReputation, tracker.revenue.getValue())
+	require.EqualValues(t, totalReputation, tracker.incomingRevenue.getValue())
 }
 
 func assertHtlcLifecycle(t *testing.T, tracker *reputationTracker, idx int,

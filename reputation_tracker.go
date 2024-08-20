@@ -28,7 +28,7 @@ func newReputationTracker(clock clock.Clock, params ManagerParams,
 	log Logger, startValue *DecayingAverageStart) *reputationTracker {
 
 	return &reputationTracker{
-		revenue: newDecayingAverage(
+		incomingRevenue: newDecayingAverage(
 			clock, params.reputationWindow(), startValue,
 		),
 		incomingInFlight: make(map[int]*InFlightHTLC),
@@ -40,9 +40,9 @@ func newReputationTracker(clock clock.Clock, params ManagerParams,
 }
 
 type reputationTracker struct {
-	// revenue tracks the bi-directional revenue that this channel has
-	// earned the local node as the incoming edge for HTLC forwards.
-	revenue *decayingAverage
+	// incomingRevenue tracks the revenue that the channel has earned us
+	// as the incoming link.
+	incomingRevenue *decayingAverage
 
 	// incomingInFlight provides a map of in-flight HTLCs, keyed by htlc id
 	// on the incoming link.
@@ -67,7 +67,7 @@ type reputationTracker struct {
 
 func (r *reputationTracker) Reputation(incoming bool) Reputation {
 	return Reputation{
-		IncomingRevenue: r.revenue.getValue(),
+		IncomingRevenue: r.incomingRevenue.getValue(),
 		InFlightRisk:    r.inFlightHTLCRisk(incoming),
 	}
 }
@@ -78,7 +78,7 @@ func (r *reputationTracker) AddIncomingInFlight(htlc *ProposedHTLC,
 	outgoingDecision ForwardOutcome) error {
 
 	inFlightHTLC := &InFlightHTLC{
-		TimestampAdded:   r.revenue.clock.Now(),
+		TimestampAdded:   r.incomingRevenue.clock.Now(),
 		ProposedHTLC:     htlc,
 		OutgoingDecision: outgoingDecision,
 	}
@@ -142,7 +142,7 @@ func (r *reputationTracker) ResolveIncoming(htlc *ResolvedHTLC) (*InFlightHTLC,
 	r.log.Infof("Adding effective fees to incoming channel: %v: %v",
 		htlc.IncomingChannel.ToUint64(), effectiveFees)
 
-	r.revenue.add(effectiveFees)
+	r.incomingRevenue.add(effectiveFees)
 
 	return inFlight, nil
 }
@@ -170,7 +170,8 @@ func (r *reputationTracker) ResolveOutgoing(incoming lnwire.ShortChannelID,
 	r.log.Infof("Adding effective fees to outgoing channel: %v",
 		effectiveFees)
 
-	r.revenue.add(effectiveFees)
+	// Don't do this!
+	//r.revenue.add(effectiveFees)
 
 	// If there's nothing left, we can delete the channel map as well.
 	if len(inFlightChan) == 0 {
