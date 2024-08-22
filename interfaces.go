@@ -51,22 +51,19 @@ type ReputationCheck struct {
 	IncomingChannel Reputation
 
 	OutgoingChannel Reputation
-
-	// HTLCRisk is the risk that the HTLC poses to the forwarding node.
-	HTLCRisk float64
 }
 
 // IncomingReputation returns a boolean indicating whether the proposed forward
 // has good reputation in the incoming direction.
 func (r ReputationCheck) IncomingReputation() bool {
-	risk := r.IncomingChannel.InFlightRisk + r.HTLCRisk
+	risk := r.IncomingChannel.InFlightRisk + r.OutgoingChannel.HTLCRisk
 	return r.IncomingChannel.Reputation > r.OutgoingChannel.Revenue+risk
 }
 
 // OutgoingReputation returns a boolean indicating whether the proposed forward
 // has good reputation in the outgoing direction.
 func (r ReputationCheck) OutgoingReputation() bool {
-	risk := r.OutgoingChannel.InFlightRisk + r.HTLCRisk
+	risk := r.OutgoingChannel.InFlightRisk + r.IncomingChannel.HTLCRisk
 	return r.OutgoingChannel.Reputation > r.IncomingChannel.Revenue+risk
 }
 
@@ -77,15 +74,15 @@ func (r ReputationCheck) SufficientReputation() bool {
 }
 
 func (r ReputationCheck) String() string {
-	return fmt.Sprintf("Reputation check for HTLC risk %v: %v\n"+
-		"- Incoming check (%v): %v - %v - %v > %v\n"+
-		"- Outgoing check (%v): %v - %v - %v > %v",
-		r.HTLCRisk, r.SufficientReputation(),
+	return fmt.Sprintf("Reputation check for HTLC risk %v\n"+
+		"- Incoming check (%v): %v - inflight %v - htlc %v > %v\n"+
+		"- Outgoing check (%v): %v - inflight %v - htlc %v > %v",
+		r.SufficientReputation(),
 		r.IncomingReputation(), r.IncomingChannel.Revenue,
-		r.IncomingChannel.InFlightRisk, r.HTLCRisk,
+		r.IncomingChannel.InFlightRisk, r.OutgoingChannel.HTLCRisk,
 		r.OutgoingChannel.Revenue, r.OutgoingReputation(),
 		r.OutgoingChannel.Reputation, r.OutgoingChannel.InFlightRisk,
-		r.HTLCRisk, r.IncomingChannel.Revenue)
+		r.IncomingChannel.HTLCRisk, r.IncomingChannel.Revenue)
 }
 
 // Reputation reflects the components that make up the reputation of a link in
@@ -108,6 +105,10 @@ type Reputation struct {
 	// - Incoming reputation: the HTLCs the channel has forwarded us.
 	// - Outgoing reputation: the HTLCs we have forwarded the channel.
 	InFlightRisk float64
+
+	// HTLC risk is the risk of the proposed HTLC's addition to the
+	// channel in the selected direction.
+	HTLCRisk float64
 }
 
 // ForwardOutcome represents the various forwarding outcomes for a proposed
@@ -205,7 +206,7 @@ type reputationMonitor interface {
 
 	// Reputation returns the details of a reputation monitor's current
 	// standing as either an incoming or outgoing link.
-	Reputation(incoming bool) Reputation
+	Reputation(htlc *ProposedHTLC, incoming bool) Reputation
 }
 
 // revenueMonitor is an interface that represents the tracking of forwading

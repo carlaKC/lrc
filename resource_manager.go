@@ -222,12 +222,8 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	}
 
 	reputation := ReputationCheck{
-		IncomingChannel: incomingChannelRep.Reputation(true),
-		OutgoingChannel: outgoingChannelRep.Reputation(false),
-		HTLCRisk: OutstandingRisk(
-			float64(r.params.BlockTime), htlc,
-			r.params.ResolutionPeriod,
-		),
+		IncomingChannel: incomingChannelRep.Reputation(htlc, true),
+		OutgoingChannel: outgoingChannelRep.Reputation(htlc, false),
 	}
 
 	outcome := outgoingChannelRep.MayAddOutgoing(

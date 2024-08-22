@@ -159,11 +159,14 @@ type outgoingHTLC struct {
 
 // Reputation returns the reputation score for a link as either an incoming or
 // outgoing source of traffic.
-func (r *reputationTracker) Reputation(incoming bool) Reputation {
+func (r *reputationTracker) Reputation(htlc *ProposedHTLC,
+	incoming bool) Reputation {
+
 	rep := Reputation{
 		Revenue:      r.bidirectionalRevenue.getValue(),
 		Reputation:   r.incomingReputation.getValue(),
 		InFlightRisk: r.inFlightHTLCRisk(incoming),
+		HTLCRisk:     r.htlcRisk(htlc, incoming),
 	}
 
 	if !incoming {
@@ -269,9 +272,7 @@ func (r *reputationTracker) AddOutgoingInFlight(htlc *ProposedHTLC,
 		protected: protectedResources,
 		// We track this risk here so that we don't have to store htlc
 		// fee and expiry values in outgoing.
-		risk: InFlightRisk(
-			r.blockTime, r.resolutionPeriod, htlc,
-		),
+		risk: r.calcInFlightRisk(htlc, false),
 	}
 
 	return nil
@@ -377,6 +378,9 @@ func (r *reputationTracker) inFlightHTLCRisk(incoming bool) float64 {
 	if !incoming {
 		for _, incomingChan := range r.outgoingInFlight {
 			for _, htlc := range incomingChan {
+				// Note: this risk uses "stale" utilization
+				// because we don't store all the values
+				// required to calculate risk fresh every time.
 				inFlightRisk += htlc.risk
 			}
 		}
@@ -385,9 +389,7 @@ func (r *reputationTracker) inFlightHTLCRisk(incoming bool) float64 {
 	}
 
 	for _, htlc := range r.incomingInFlight {
-		inFlightRisk += InFlightRisk(
-			r.blockTime, r.resolutionPeriod, htlc.ProposedHTLC,
-		)
+		inFlightRisk += r.calcInFlightRisk(htlc.ProposedHTLC, true)
 	}
 
 	return inFlightRisk
@@ -427,22 +429,28 @@ func effectiveFees(resolutionPeriod time.Duration, timestampSettled time.Time,
 	}
 }
 
-func InFlightRisk(blockTime float64, resolutionPeriod time.Duration,
-	htlc *ProposedHTLC) float64 {
+func (r reputationTracker) calcInFlightRisk(htlc *ProposedHTLC,
+	incoming bool) float64 {
 
 	// Only endorsed HTLCs count towards our in flight risk.
 	if htlc.IncomingEndorsed != EndorsementTrue {
 		return 0
 	}
 
-	return OutstandingRisk(blockTime, htlc, resolutionPeriod)
+	return r.htlcRisk(htlc, incoming)
 }
 
-// OutstandingRisk calculates the outstanding risk of in-flight HTLCs.
-func OutstandingRisk(blockTime float64, htlc *ProposedHTLC,
-	resolutionPeriod time.Duration) float64 {
+// htlcRisk calculates the outstanding risk of in-flight HTLCs, regardless of
+// whether it's endorsed or not.
+func (r reputationTracker) htlcRisk(htlc *ProposedHTLC,
+	incoming bool) float64 {
+
+	utiliation := r.incomingUtilization.maxUtilization()
+	if !incoming {
+		utiliation = r.outgoingUtilization.maxUtilization()
+	}
 
 	return (float64(htlc.ForwardingFee()) *
-		float64(htlc.CltvExpiryDelta) * blockTime * 60) /
-		resolutionPeriod.Seconds()
+		float64(htlc.CltvExpiryDelta) * r.blockTime * 60) /
+		r.resolutionPeriod.Seconds() * utiliation
 }
