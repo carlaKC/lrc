@@ -66,6 +66,13 @@ func newReputationTracker(clock clock.Clock, params ManagerParams,
 		),
 		incomingInFlight: make(map[int]*InFlightHTLC),
 		outgoingInFlight: make(map[lnwire.ShortChannelID]map[int]outgoingHTLC),
+		// TODO: add ability to bootstrap utlization values.
+		incomingUtilization: newChannelUtilization(
+			clock, params.RevenueWindow, nil, nil, info,
+		),
+		outgoingUtilization: newChannelUtilization(
+			clock, params.RevenueWindow, nil, nil, info,
+		),
 		blockTime:        float64(params.BlockTime),
 		generalLiquidity: generalLiquidity,
 		generalSlots:     int(generalSlots),
@@ -114,6 +121,14 @@ type reputationTracker struct {
 	// channel and index, because we don't yet have a unique identifier for
 	// the outgoing htlc.
 	outgoingInFlight map[lnwire.ShortChannelID]map[int]outgoingHTLC
+
+	// incomingUtilization tracks utilization of the channel as an incoming
+	// link.
+	incomingUtilization channelUtilization
+
+	// outgoingUtilization tracks utilization of the channel as an outgoing
+	// link.
+	outgoingUtilization channelUtilization
 
 	// blockTime is the expected time to find a block, surfaced to account
 	// for simulation scenarios where this isn't 10 minutes.
@@ -224,6 +239,7 @@ func (r *reputationTracker) AddIncomingInFlight(htlc *ProposedHTLC,
 			htlc.IncomingIndex)
 	}
 
+	r.incomingUtilization.addHtlc(htlc.IncomingAmount)
 	r.incomingInFlight[htlc.IncomingIndex] = inFlightHTLC
 
 	return nil
@@ -247,7 +263,7 @@ func (r *reputationTracker) AddOutgoingInFlight(htlc *ProposedHTLC,
 			ErrDuplicateIndex, htlc.IncomingIndex)
 	}
 
-	// For outgoing HTLCs, we only need to track our in flight risk.
+	r.outgoingUtilization.addHtlc(htlc.OutgoingAmount)
 	r.outgoingInFlight[htlc.IncomingChannel][htlc.IncomingIndex] = outgoingHTLC{
 		amount:    htlc.OutgoingAmount,
 		protected: protectedResources,
