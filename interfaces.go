@@ -75,14 +75,16 @@ func (r ReputationCheck) SufficientReputation() bool {
 
 func (r ReputationCheck) String() string {
 	return fmt.Sprintf("Reputation check for HTLC risk %v\n"+
-		"- Incoming check (%v): %v - inflight %v - htlc %v > %v\n"+
-		"- Outgoing check (%v): %v - inflight %v - htlc %v > %v",
+		"- Incoming check (%v): %v - inflight %v - htlc %v > %v (utilization %v)\n"+
+		"- Outgoing check (%v): %v - inflight %v - htlc %v > %v (utilization %v)",
 		r.SufficientReputation(),
 		r.IncomingReputation(), r.IncomingChannel.Revenue,
 		r.IncomingChannel.InFlightRisk, r.OutgoingChannel.HTLCRisk,
-		r.OutgoingChannel.Revenue, r.OutgoingReputation(),
+		r.OutgoingChannel.Revenue, r.OutgoingChannel.UtilizationFactor,
+		r.OutgoingReputation(),
 		r.OutgoingChannel.Reputation, r.OutgoingChannel.InFlightRisk,
-		r.IncomingChannel.HTLCRisk, r.IncomingChannel.Revenue)
+		r.IncomingChannel.HTLCRisk, r.IncomingChannel.Revenue,
+		r.IncomingChannel.UtilizationFactor)
 }
 
 // Reputation reflects the components that make up the reputation of a link in
@@ -109,6 +111,10 @@ type Reputation struct {
 	// HTLC risk is the risk of the proposed HTLC's addition to the
 	// channel in the selected direction.
 	HTLCRisk float64
+
+	// UtilizationFactor is the average channel resource utilization that we
+	// use to scale htlc risk.
+	UtilizationFactor float64
 }
 
 // ForwardOutcome represents the various forwarding outcomes for a proposed
