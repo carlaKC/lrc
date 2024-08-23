@@ -55,8 +55,11 @@ func newReputationTracker(clock clock.Clock, params ManagerParams,
 	generalSlots := info.InFlightHTLC - (info.InFlightHTLC*params.ProtectedPercentage)/100
 
 	return &reputationTracker{
-		bidirectionalRevenue: newDecayingAverage(
-			clock, params.RevenueWindow, history.Revenue,
+		incomingRevenue: newDecayingAverage(
+			clock, params.RevenueWindow, history.IncomingRevenue,
+		),
+		outgoingRevenue: newDecayingAverage(
+			clock, params.RevenueWindow, history.OutgoingRevenue,
 		),
 		incomingReputation: newDecayingAverage(
 			clock, params.reputationWindow(), history.IncomingReputation,
@@ -100,9 +103,13 @@ func newReputationTracker(clock clock.Clock, params ManagerParams,
 // incoming and outgoing in-flight HTLCs on the channel against our allocated
 // general resources.
 type reputationTracker struct {
-	// bidirectionalRevenue tracks the revenue that the channel has earned
-	// as both the incoming and outgoing link.
-	bidirectionalRevenue *decayingAverage
+	// incomingRevenue tracks the revenue that the channel has earned
+	// from HTLCs forwarded to it as the incoming link.
+	incomingRevenue *decayingAverage
+
+	// outgoingRevenue tracks the revenue that the channel has earned from
+	// HTLCs using forwarded through it as the outgoing link.
+	outgoingRevenue *decayingAverage
 
 	// incomingReputation tracks the revenue that the channel has earned us
 	// as the incoming link.
@@ -163,7 +170,7 @@ func (r *reputationTracker) Reputation(htlc *ProposedHTLC,
 	incoming bool) Reputation {
 
 	rep := Reputation{
-		Revenue:           r.bidirectionalRevenue.getValue(),
+		Revenue:           r.incomingRevenue.getValue(),
 		Reputation:        r.incomingReputation.getValue(),
 		InFlightRisk:      r.inFlightHTLCRisk(incoming),
 		HTLCRisk:          r.htlcRisk(htlc, incoming),
@@ -171,6 +178,7 @@ func (r *reputationTracker) Reputation(htlc *ProposedHTLC,
 	}
 
 	if !incoming {
+		rep.Revenue = r.outgoingRevenue.getValue()
 		rep.Reputation = r.outgoingReputation.getValue()
 		rep.UtilizationFactor = r.incomingUtilization.maxUtilization()
 	}
@@ -297,11 +305,13 @@ func (r *reputationTracker) updateRevenue(incoming bool, inFlight *InFlightHTLC,
 			htlc.IncomingChannel, effectiveFees)
 
 		r.incomingReputation.add(effectiveFees)
+		r.incomingRevenue.add(float64(inFlight.ForwardingFee()))
 	} else {
 		r.log.Infof("Adding effective fees to outgoing channel: %v: %v",
 			htlc.OutgoingChannel, effectiveFees)
 
 		r.outgoingReputation.add(effectiveFees)
+		r.outgoingRevenue.add(float64(inFlight.ForwardingFee()))
 	}
 
 	if !htlc.Success {
@@ -312,8 +322,6 @@ func (r *reputationTracker) updateRevenue(incoming bool, inFlight *InFlightHTLC,
 		"to channel: %v msat", htlc.IncomingChannel,
 		htlc.IncomingIndex, htlc.OutgoingChannel,
 		htlc.OutgoingIndex, inFlight.ForwardingFee())
-
-	r.bidirectionalRevenue.add(float64(inFlight.ForwardingFee()))
 }
 
 // ResolveIncoming removes a htlc from the reputation tracker's state,

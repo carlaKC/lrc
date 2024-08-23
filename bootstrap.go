@@ -66,10 +66,11 @@ func BootstrapHistory(scid lnwire.ShortChannelID, params ManagerParams,
 	})
 
 	var (
-		incomingReputation   *decayingAverage
-		outgoingReputation   *decayingAverage
-		bidirectionalRevenue *decayingAverage
-		err                  error
+		incomingReputation *decayingAverage
+		outgoingReputation *decayingAverage
+		incomingRevenue    *decayingAverage
+		outgoingRevenue    *decayingAverage
+		err                error
 	)
 
 	for _, h := range history {
@@ -84,6 +85,14 @@ func BootstrapHistory(scid lnwire.ShortChannelID, params ManagerParams,
 				return nil, err
 			}
 
+			incomingRevenue, err = addRevenueHtlc(
+				clock, scid, params, h, incomingRevenue,
+			)
+
+			if err != nil {
+				return nil, err
+			}
+
 		// If the HTLC was forwarded out through us, add to outgoing
 		// reputation and bidirectional revenue.
 		case h.OutgoingChannel == scid:
@@ -91,20 +100,20 @@ func BootstrapHistory(scid lnwire.ShortChannelID, params ManagerParams,
 				clock, scid, h, params, outgoingReputation,
 			)
 
+			outgoingRevenue, err = addRevenueHtlc(
+				clock, scid, params, h, outgoingRevenue,
+			)
+
+			if err != nil {
+				return nil, err
+			}
+
 		default:
 			return nil, fmt.Errorf("history for: "+
 				"%v contains forward that does not belong "+
 				"to channel (%v -> %v)", scid,
 				h.InFlightHTLC.IncomingChannel,
 				h.Resolution.OutgoingChannel)
-		}
-
-		bidirectionalRevenue, err = addRevenueHtlc(
-			clock, scid, params, h, bidirectionalRevenue,
-		)
-
-		if err != nil {
-			return nil, err
 		}
 	}
 
@@ -124,10 +133,17 @@ func BootstrapHistory(scid lnwire.ShortChannelID, params ManagerParams,
 		}
 	}
 
-	if bidirectionalRevenue != nil {
-		channelHistory.Revenue = &DecayingAverageStart{
-			Value:      bidirectionalRevenue.getValue(),
-			LastUpdate: bidirectionalRevenue.lastUpdate,
+	if incomingRevenue != nil {
+		channelHistory.IncomingRevenue = &DecayingAverageStart{
+			Value:      incomingRevenue.getValue(),
+			LastUpdate: incomingRevenue.lastUpdate,
+		}
+	}
+
+	if outgoingRevenue != nil {
+		channelHistory.IncomingRevenue = &DecayingAverageStart{
+			Value:      outgoingRevenue.getValue(),
+			LastUpdate: outgoingRevenue.lastUpdate,
 		}
 	}
 

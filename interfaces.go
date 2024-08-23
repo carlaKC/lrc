@@ -78,22 +78,27 @@ func (r ReputationCheck) String() string {
 		"- Incoming check (%v): %v - inflight %v - htlc %v > %v (utilization %v)\n"+
 		"- Outgoing check (%v): %v - inflight %v - htlc %v > %v (utilization %v)",
 		r.SufficientReputation(),
-		r.IncomingReputation(), r.IncomingChannel.Revenue,
-		r.IncomingChannel.InFlightRisk, r.OutgoingChannel.HTLCRisk,
+		// Incoming check
+		r.IncomingReputation(),
+		r.IncomingChannel.Reputation,
+		r.IncomingChannel.InFlightRisk,
+		r.OutgoingChannel.HTLCRisk,
+		r.OutgoingChannel.Revenue,
 		r.OutgoingChannel.UtilizationFactor,
-		r.OutgoingChannel.Revenue, r.OutgoingReputation(),
-		r.OutgoingChannel.Reputation, r.OutgoingChannel.InFlightRisk,
-		r.IncomingChannel.HTLCRisk, r.IncomingChannel.Revenue,
+		// Outgoing check
+		r.OutgoingReputation(),
+		r.OutgoingChannel.Reputation,
+		r.OutgoingChannel.InFlightRisk,
+		r.IncomingChannel.HTLCRisk,
+		r.IncomingChannel.Revenue,
 		r.IncomingChannel.UtilizationFactor)
 }
 
 // Reputation reflects the components that make up the reputation of a link in
 // the outgoing direction.
 type Reputation struct {
-	// Revenue represents the revenue that the forwarding channel has
-	// accrued over time bidirectionally. This value represents the
-	// threshold that other channels must meet to have good reputation with
-	// this channel.
+	// Revenue represents the revenue earned from the use of this channel
+	// in the direction that reputation is specified for.
 	Revenue float64
 
 	// Reputation represents the directional fee contribution from this
@@ -381,9 +386,13 @@ type ChannelHistory struct {
 	// forwarding outgoing htlcs.
 	OutgoingReputation *DecayingAverageStart
 
-	// Revenue is the bidirectional revenue of the channel that represents
-	// our reputation threshold for other channels.
-	Revenue *DecayingAverageStart
+	// IncomingRevenue is the revenue that the node has earned from
+	// HTLCs forwarded over the channel as the incoming link.
+	IncomingRevenue *DecayingAverageStart
+
+	// OutgoingRevenue is the revenue that the node has earned from
+	// HTLCs forwarded over the channel as the outgoing link.
+	OutgoingRevenue *DecayingAverageStart
 }
 
 func (c *ChannelHistory) String() string {
@@ -399,8 +408,14 @@ func (c *ChannelHistory) String() string {
 			c.OutgoingReputation.Value)
 	}
 
-	if c.Revenue != nil {
-		str = fmt.Sprintf("%vrevenue: %v", str, c.Revenue.Value)
+	if c.IncomingRevenue != nil {
+		str = fmt.Sprintf("%vincoming revenue: %v", str,
+			c.IncomingRevenue.Value)
+	}
+
+	if c.OutgoingRevenue != nil {
+		str = fmt.Sprintf("%voutgoing revenue: %v", str,
+			c.OutgoingRevenue.Value)
 	}
 
 	if str == "" {
