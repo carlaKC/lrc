@@ -293,13 +293,13 @@ func (r *reputationTracker) updateRevenue(incoming bool, inFlight *InFlightHTLC,
 	// First, update either the incoming or outgoing direction with the
 	// effective fees for the HTLC.
 	if incoming {
-		r.log.Infof("Adding effective fees to incoming channel: %v: %v",
-			htlc.IncomingChannel, effectiveFees)
+		r.log.Infof("Adding effective fees: %v to incoming channel: %v: %v",
+			effectiveFees, htlc.IncomingChannel, effectiveFees)
 
 		r.incomingReputation.add(effectiveFees)
 	} else {
-		r.log.Infof("Adding effective fees to outgoing channel: %v: %v",
-			htlc.OutgoingChannel, effectiveFees)
+		r.log.Infof("Adding effective fees: %v to outgoing channel: %v: %v",
+			effectiveFees, htlc.OutgoingChannel, effectiveFees)
 
 		r.outgoingReputation.add(effectiveFees)
 	}
