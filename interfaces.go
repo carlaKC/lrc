@@ -51,6 +51,10 @@ type ReputationCheck struct {
 	IncomingChannel Reputation
 
 	OutgoingChannel Reputation
+
+	// GeneralJammed is set when we're overriding reputation checks to just
+	// act as if we've been general jammed.
+	GeneralJammed bool
 }
 
 // IncomingReputation returns a boolean indicating whether the proposed forward
@@ -74,7 +78,7 @@ func (r ReputationCheck) SufficientReputation() bool {
 }
 
 func (r ReputationCheck) String() string {
-	return fmt.Sprintf("Reputation check for HTLC risk %v\n"+
+	str := fmt.Sprintf("Reputation check for HTLC risk %v\n"+
 		"- Incoming check (%v): %v - inflight %v - htlc %v > %v (utilization %v)\n"+
 		"- Outgoing check (%v): %v - inflight %v - htlc %v > %v (utilization %v)",
 		r.SufficientReputation(),
@@ -85,6 +89,12 @@ func (r ReputationCheck) String() string {
 		r.OutgoingChannel.Reputation, r.OutgoingChannel.InFlightRisk,
 		r.IncomingChannel.HTLCRisk, r.IncomingChannel.Revenue,
 		r.IncomingChannel.UtilizationFactor)
+
+	if r.GeneralJammed {
+		return fmt.Sprintf("Forced general jam for: %v", str)
+	}
+
+	return str
 }
 
 // Reputation reflects the components that make up the reputation of a link in

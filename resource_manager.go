@@ -95,6 +95,11 @@ type ManagerParams struct {
 
 	// BlockTime is the expected block time.
 	BlockTime time.Duration
+
+	// JamGeneral is a testing flag that can be enabled to induce the node
+	// to act as if it is currently being general jammed. This can be used
+	// for easy simulation of wide-spread general resource jamming attacks.
+	JamGeneral bool
 }
 
 // validate that we have sane parameters.
@@ -224,12 +229,20 @@ func (r *ResourceManager) ForwardHTLC(htlc *ProposedHTLC,
 	reputation := ReputationCheck{
 		IncomingChannel: incomingChannelRep.Reputation(htlc, true),
 		OutgoingChannel: outgoingChannelRep.Reputation(htlc, false),
+		GeneralJammed:   r.params.JamGeneral,
 	}
 
 	outcome := outgoingChannelRep.MayAddOutgoing(
 		reputation, htlc.OutgoingAmount,
 		htlc.IncomingEndorsed == EndorsementTrue,
 	)
+
+	// If we've enabled the option to behave as if we're general jammed,
+	// just reject any HTLCs that would not have gained access to protected
+	// resources.
+	if r.params.JamGeneral && outcome != ForwardOutcomeEndorsed {
+		outcome = ForwardOutcomeNoResources
+	}
 
 	// Always add the HTLC to our incoming in flight tracking. It's already
 	// locked in on our incoming link when we intercept it, and we'll want
