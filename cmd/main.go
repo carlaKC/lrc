@@ -247,6 +247,7 @@ func getNetworkData(data map[string]*lrc.ChannelBootstrap,
 			if reputation != nil {
 				incomingReputation = reputation.DebugValue()
 			}
+			incomingReputation = (100 + incomingReputation) * 100
 
 			for chanOut, revenue := range channels.Outgoing {
 				if chanOut == chanIn {
@@ -271,6 +272,7 @@ func getNetworkData(data map[string]*lrc.ChannelBootstrap,
 					outgoingRevenue = inRevAvg.DebugValue()
 				}
 
+				outgoingReputation = (100 + outgoingReputation) * 100
 				record := networkReputation{
 					node:           alias,
 					chanIn:         chanIn.ToUint64(),

@@ -164,14 +164,14 @@ func (r *reputationTracker) Reputation(htlc *ProposedHTLC,
 
 	rep := Reputation{
 		Revenue:           r.bidirectionalRevenue.getValue(),
-		Reputation:        r.incomingReputation.getValue(),
+		Reputation:        (100 + r.incomingReputation.getValue()) * 100,
 		InFlightRisk:      r.inFlightHTLCRisk(incoming),
 		HTLCRisk:          r.htlcRisk(htlc, incoming),
 		UtilizationFactor: r.outgoingUtilization.maxUtilization(),
 	}
 
 	if !incoming {
-		rep.Reputation = r.outgoingReputation.getValue()
+		rep.Reputation = (100 + r.outgoingReputation.getValue()) * 100
 		rep.UtilizationFactor = r.incomingUtilization.maxUtilization()
 	}
 
