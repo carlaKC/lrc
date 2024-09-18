@@ -244,7 +244,6 @@ func (r *reputationTracker) AddIncomingInFlight(htlc *ProposedHTLC,
 			htlc.IncomingIndex)
 	}
 
-	r.incomingUtilization.addHtlc(htlc.IncomingAmount)
 	r.incomingInFlight[htlc.IncomingIndex] = inFlightHTLC
 
 	return nil
@@ -268,7 +267,6 @@ func (r *reputationTracker) AddOutgoingInFlight(htlc *ProposedHTLC,
 			ErrDuplicateIndex, htlc.IncomingIndex)
 	}
 
-	r.outgoingUtilization.addHtlc(htlc.OutgoingAmount)
 	r.outgoingInFlight[htlc.IncomingChannel][htlc.IncomingIndex] = outgoingHTLC{
 		amount:    htlc.OutgoingAmount,
 		protected: protectedResources,
@@ -292,6 +290,9 @@ func (r *reputationTracker) updateRevenue(incoming bool, inFlight *InFlightHTLC,
 
 	// First, update either the incoming or outgoing direction with the
 	// effective fees for the HTLC.
+	addHtlc := func() {
+		r.incomingUtilization.addHtlc(inFlight.IncomingAmount)
+	}
 	if incoming {
 		r.log.Infof("Adding effective fees: %v to incoming channel: %v: %v",
 			effectiveFees, htlc.IncomingChannel, effectiveFees)
@@ -302,11 +303,17 @@ func (r *reputationTracker) updateRevenue(incoming bool, inFlight *InFlightHTLC,
 			effectiveFees, htlc.OutgoingChannel, effectiveFees)
 
 		r.outgoingReputation.add(effectiveFees)
+		addHtlc = func() {
+			r.outgoingUtilization.addHtlc(inFlight.OutgoingAmount)
+		}
 	}
 
 	if !htlc.Success {
 		return
 	}
+
+	// Successful htlcs contribute to channel utilization.
+	addHtlc()
 
 	r.log.Infof("HTLC successful (%v(%v) -> %v(%v)): adding fees "+
 		"to channel: %v msat", htlc.IncomingChannel,
