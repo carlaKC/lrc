@@ -74,17 +74,13 @@ func (r ReputationCheck) OutgoingReputation() bool {
 // SufficientReputation returns a boolean indicating whether the forward has
 // sufficient reputation.
 func (r ReputationCheck) SufficientReputation() bool {
-	return r.IncomingReputation() && r.OutgoingReputation()
+	return /*r.IncomingReputation() &&*/ r.OutgoingReputation()
 }
 
 func (r ReputationCheck) String() string {
 	str := fmt.Sprintf("Reputation check for HTLC risk %v\n"+
-		"- Incoming check (%v): %v - inflight %v - htlc %v > %v (utilization %v)\n"+
 		"- Outgoing check (%v): %v - inflight %v - htlc %v > %v (utilization %v)",
 		r.SufficientReputation(),
-		r.IncomingReputation(), r.IncomingChannel.Revenue,
-		r.IncomingChannel.InFlightRisk, r.OutgoingChannel.HTLCRisk,
-		r.OutgoingChannel.Revenue, r.OutgoingChannel.UtilizationFactor,
 		r.OutgoingReputation(),
 		r.OutgoingChannel.Reputation, r.OutgoingChannel.InFlightRisk,
 		r.IncomingChannel.HTLCRisk, r.IncomingChannel.Revenue,
