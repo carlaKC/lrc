@@ -48,10 +48,6 @@ type ResourceManager struct {
 	// for a htlc to resolve in.
 	resolutionPeriod time.Duration
 
-	// lookupHistory fetches the historical reputation and revenue values
-	// for a channel.
-	lookupHistory GetHistoryFunc
-
 	// newReputationMonitor creates a new reputation monitor, pulled
 	// out for mocking purposes in tests.
 	newReputationMonitor NewReputationMonitor
@@ -141,7 +137,6 @@ func NewResourceManager(params ManagerParams, clock clock.Clock,
 			map[lnwire.ShortChannelID]reputationMonitor,
 		),
 		resolutionPeriod: params.ResolutionPeriod,
-		lookupHistory:    channelHistory,
 		newReputationMonitor: func(channel lnwire.ShortChannelID,
 			info ChannelInfo) (reputationMonitor, error) {
 
