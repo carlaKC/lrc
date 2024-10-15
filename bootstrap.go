@@ -8,42 +8,152 @@ import (
 	"github.com/lightningnetwork/lnd/lnwire"
 )
 
-func addReputationHtlc(clock clock.Clock, scid lnwire.ShortChannelID,
-	htlc *ForwardedHTLC, params ManagerParams,
-	reputationAvg *decayingAverage) (*decayingAverage, error) {
+type ChannelBoostrap struct {
+	Scid                 lnwire.ShortChannelID
+	incomingReputation   *decayingAverage
+	outgoingReputation   *decayingAverage
+	bidirectionalRevenue *decayingAverage
+}
 
-	// Sanity check that we only have forwards where we're the
-	// incoming channel.
-	if htlc.InFlightHTLC.IncomingChannel != scid {
-		return nil, fmt.Errorf("reputation history for: "+
+func (c *ChannelBoostrap) ToChannelHistory() *ChannelHistory {
+	channelHistory := &ChannelHistory{}
+
+	if c.incomingReputation != nil {
+		channelHistory.IncomingReputation = &DecayingAverageStart{
+			Value:      c.incomingReputation.value,
+			LastUpdate: c.incomingReputation.lastUpdate,
+		}
+	}
+
+	if c.outgoingReputation != nil {
+		channelHistory.OutgoingReputation = &DecayingAverageStart{
+			Value:      c.outgoingReputation.value,
+			LastUpdate: c.outgoingReputation.lastUpdate,
+		}
+	}
+
+	if c.bidirectionalRevenue != nil {
+		channelHistory.Revenue = &DecayingAverageStart{
+			Value:      c.bidirectionalRevenue.value,
+			LastUpdate: c.bidirectionalRevenue.lastUpdate,
+		}
+	}
+
+	return channelHistory
+}
+
+func (c *ChannelBoostrap) AddHTLC(clock clock.Clock, htlc *ForwardedHTLC,
+	params ManagerParams) error {
+	switch {
+	// If the HTLC was forwarded to us, add to incoming reputation
+	// and bidirectional revenue.
+	case htlc.IncomingChannel == c.Scid:
+		if err := c.addReputationHtlc(
+			clock, htlc, params, true,
+		); err != nil {
+			return err
+		}
+
+	// If the HTLC was forwarded out through us, add to outgoing
+	// reputation and bidirectional revenue.
+	case htlc.OutgoingChannel == c.Scid:
+		if err := c.addReputationHtlc(
+			clock, htlc, params, false,
+		); err != nil {
+			return err
+		}
+
+	default:
+		return fmt.Errorf("history for: "+
 			"%v contains forward that does not belong "+
-			"to channel (%v -> %v)", scid,
+			"to channel (%v -> %v)", c.Scid,
 			htlc.InFlightHTLC.IncomingChannel,
 			htlc.Resolution.OutgoingChannel)
 	}
+
+	return c.addRevenueHtlc(clock, params, htlc)
+}
+
+func (c *ChannelBoostrap) addReputationHtlc(clock clock.Clock,
+	htlc *ForwardedHTLC, params ManagerParams, incoming bool,
+) error {
 
 	effectiveFees := effectiveFees(
 		params.ResolutionPeriod,
 		htlc.Resolution.TimestampSettled, &htlc.InFlightHTLC,
 		htlc.Resolution.Success,
 	)
+	forwardScid := htlc.IncomingChannel
+	if !incoming {
+		forwardScid = htlc.OutgoingChannel
+	}
 
-	if reputationAvg == nil {
-		reputationAvg = newDecayingAverage(
-			clock, params.reputationWindow(),
+	// Sanity check scid.
+	if forwardScid != c.Scid {
+		return fmt.Errorf("bootstrap for channel: %v reputation "+
+			"direction: %v does not match htlc scid: %v "+
+			"(%v -> %v)", c.Scid, incoming, forwardScid,
+			htlc.IncomingChannel, htlc.OutgoingChannel,
+		)
+	}
+
+	add := func(avg *decayingAverage) *decayingAverage {
+		if avg == nil {
+			avg = newDecayingAverage(
+				clock, params.reputationWindow(),
+				&DecayingAverageStart{
+					htlc.Resolution.TimestampSettled,
+					effectiveFees,
+				},
+			)
+		} else {
+			avg.addAtTime(
+				effectiveFees,
+				htlc.Resolution.TimestampSettled,
+			)
+		}
+
+		return avg
+	}
+
+	if incoming {
+		c.incomingReputation = add(c.incomingReputation)
+	} else {
+		c.outgoingReputation = add(c.outgoingReputation)
+	}
+
+	return nil
+}
+
+func (c *ChannelBoostrap) addRevenueHtlc(clock clock.Clock,
+	params ManagerParams, htlc *ForwardedHTLC) error {
+
+	if htlc.InFlightHTLC.OutgoingChannel != c.Scid &&
+		htlc.InFlightHTLC.IncomingChannel != c.Scid {
+
+		return fmt.Errorf("revenue history for: "+
+			"%v contains forward that does not belong "+
+			"to channel (%v -> %v)", c.Scid,
+			htlc.InFlightHTLC.IncomingChannel,
+			htlc.Resolution.OutgoingChannel)
+	}
+
+	if c.bidirectionalRevenue == nil {
+		c.bidirectionalRevenue = newDecayingAverage(
+			clock, params.RevenueWindow,
 			&DecayingAverageStart{
 				htlc.Resolution.TimestampSettled,
-				effectiveFees,
+				float64(htlc.ForwardingFee()),
 			},
 		)
 	} else {
-		reputationAvg.addAtTime(
-			effectiveFees,
+		c.bidirectionalRevenue.addAtTime(
+			float64(htlc.ForwardingFee()),
 			htlc.Resolution.TimestampSettled,
 		)
 	}
 
-	return reputationAvg, nil
+	return nil
 }
 
 // BootstrapHistory processes a set of htlc forwards for a channel and builds
@@ -65,163 +175,15 @@ func BootstrapHistory(scid lnwire.ShortChannelID, params ManagerParams,
 		)
 	})
 
-	var (
-		incomingReputation   *decayingAverage
-		outgoingReputation   *decayingAverage
-		bidirectionalRevenue *decayingAverage
-		err                  error
-	)
+	channel := ChannelBoostrap{
+		Scid: scid,
+	}
 
 	for _, h := range history {
-		switch {
-		// If the HTLC was forwarded to us, add to incoming reputation
-		// and bidirectional revenue.
-		case h.IncomingChannel == scid:
-			incomingReputation, err = addReputationHtlc(
-				clock, scid, h, params, incomingReputation,
-			)
-			if err != nil {
-				return nil, err
-			}
-
-		// If the HTLC was forwarded out through us, add to outgoing
-		// reputation and bidirectional revenue.
-		case h.OutgoingChannel == scid:
-			outgoingReputation, err = addReputationHtlc(
-				clock, scid, h, params, outgoingReputation,
-			)
-
-		default:
-			return nil, fmt.Errorf("history for: "+
-				"%v contains forward that does not belong "+
-				"to channel (%v -> %v)", scid,
-				h.InFlightHTLC.IncomingChannel,
-				h.Resolution.OutgoingChannel)
-		}
-
-		bidirectionalRevenue, err = addRevenueHtlc(
-			clock, scid, params, h, bidirectionalRevenue,
-		)
-
-		if err != nil {
+		if err := channel.AddHTLC(clock, h, params); err != nil {
 			return nil, err
 		}
 	}
 
-	channelHistory := &ChannelHistory{}
-
-	if incomingReputation != nil {
-		channelHistory.IncomingReputation = &DecayingAverageStart{
-			Value:      incomingReputation.getValue(),
-			LastUpdate: incomingReputation.lastUpdate,
-		}
-	}
-
-	if outgoingReputation != nil {
-		channelHistory.OutgoingReputation = &DecayingAverageStart{
-			Value:      outgoingReputation.getValue(),
-			LastUpdate: outgoingReputation.lastUpdate,
-		}
-	}
-
-	if bidirectionalRevenue != nil {
-		channelHistory.Revenue = &DecayingAverageStart{
-			Value:      bidirectionalRevenue.getValue(),
-			LastUpdate: bidirectionalRevenue.lastUpdate,
-		}
-	}
-
-	return channelHistory, nil
-}
-
-func addRevenueHtlc(clock clock.Clock, scid lnwire.ShortChannelID,
-	params ManagerParams, htlc *ForwardedHTLC,
-	revenueAvg *decayingAverage) (*decayingAverage, error) {
-
-	if htlc.InFlightHTLC.OutgoingChannel != scid &&
-		htlc.InFlightHTLC.IncomingChannel != scid {
-
-		return nil, fmt.Errorf("revenue history for: "+
-			"%v contains forward that does not belong "+
-			"to channel (%v -> %v)", scid,
-			htlc.InFlightHTLC.IncomingChannel,
-			htlc.Resolution.OutgoingChannel)
-	}
-
-	if revenueAvg == nil {
-		revenueAvg = newDecayingAverage(
-			clock, params.RevenueWindow,
-			&DecayingAverageStart{
-				htlc.Resolution.TimestampSettled,
-				float64(htlc.ForwardingFee()),
-			},
-		)
-	} else {
-		revenueAvg.addAtTime(
-			float64(htlc.ForwardingFee()),
-			htlc.Resolution.TimestampSettled,
-		)
-	}
-
-	return revenueAvg, nil
-}
-
-type NetworkForward struct {
-	NodeAlias string
-	*ForwardedHTLC
-}
-
-type ChannelBootstrap struct {
-	Incoming map[lnwire.ShortChannelID]*decayingAverage
-	Outgoing map[lnwire.ShortChannelID]*decayingAverage
-}
-
-func newChannels() *ChannelBootstrap {
-	return &ChannelBootstrap{
-		Incoming: make(map[lnwire.ShortChannelID]*decayingAverage),
-		Outgoing: make(map[lnwire.ShortChannelID]*decayingAverage),
-	}
-}
-
-// BootstrapNetwork reads a list of forwards belonging to a network of nodes
-// and calculates pairwise reputation for all channels in the network.
-func BootstrapNetwork(params ManagerParams, history []*NetworkForward,
-	clock clock.Clock) (map[string]*ChannelBootstrap, error) {
-
-	if len(history) == 0 {
-		return nil, nil
-	}
-
-	nodes := make(map[string]*ChannelBootstrap)
-
-	for _, h := range history {
-		var err error
-
-		channels, ok := nodes[h.NodeAlias]
-		if !ok {
-			channels = newChannels()
-		}
-
-		incoming, _ := channels.Incoming[h.IncomingChannel]
-		channels.Incoming[h.IncomingChannel], err = addReputationHtlc(
-			clock, h.IncomingChannel, h.ForwardedHTLC, params,
-			incoming,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		outgoing, _ := channels.Outgoing[h.OutgoingChannel]
-		channels.Outgoing[h.OutgoingChannel], err = addRevenueHtlc(
-			clock, h.OutgoingChannel, params, h.ForwardedHTLC,
-			outgoing,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		nodes[h.NodeAlias] = channels
-	}
-
-	return nodes, nil
+	return channel.ToChannelHistory(), nil
 }

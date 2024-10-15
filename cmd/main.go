@@ -44,18 +44,32 @@ func main() {
 		os.Exit(1)
 	}
 
-	network, err := lrc.BootstrapNetwork(
+	network, err := processForwards(
+		fwds, clock.NewDefaultClock(),
 		lrc.ManagerParams{
 			RevenueWindow:        time.Hour * 24 * 14,
 			ReputationMultiplier: 24,
 			ProtectedPercentage:  50,
 			ResolutionPeriod:     time.Second * 90,
 			BlockTime:            5,
-		}, fwds, clock.NewDefaultClock(),
+		},
 	)
 	if err != nil {
 		fmt.Println("Could not bootstrap network ", err)
 		os.Exit(1)
+	}
+
+	// Convert parsed nodes to channel history struct so we can get values
+	// easily.
+	channelHistories := make(map[string]map[lnwire.ShortChannelID]*lrc.ChannelHistory)
+	for nodeID, channels := range network {
+		newChannels := make(map[lnwire.ShortChannelID]*lrc.ChannelHistory)
+
+		for channelID, channelBootstrap := range channels {
+			newChannels[channelID] = channelBootstrap.ToChannelHistory()
+		}
+
+		channelHistories[nodeID] = newChannels
 	}
 
 	// Next, get the full graph file and collect channels for each node.
@@ -83,13 +97,9 @@ func main() {
 		return
 	}
 
-	edges, err := getNetworkEdges(graphData)
-	if err != nil {
-		fmt.Println("Error getting edge data: ", err)
-		os.Exit(1)
-	}
+	edges := getNetworkEdges(graphData)
 
-	networkData, err := getNetworkData(network, edges)
+	networkData, err := getNetworkData(channelHistories, edges)
 	if err != nil {
 		fmt.Println("Error getting netowrk data: ", err)
 		os.Exit(1)
@@ -102,8 +112,13 @@ func main() {
 	}
 }
 
+type NetworkForward struct {
+	NodeAlias string
+	*lrc.ForwardedHTLC
+}
+
 // incoming_amt,incoming_expiry,incoming_add_ts,incoming_remove_ts,outgoing_amt,outgoing_expiry,outgoing_add_ts,outgoing_remove_ts,forwarding_node,forwarding_alias,chan_in,chan_out
-func readCSV(reader *csv.Reader) ([]*lrc.NetworkForward, error) {
+func readCSV(reader *csv.Reader) ([]*NetworkForward, error) {
 	// Read in all the CSV records
 	records, err := reader.ReadAll()
 	if err != nil {
@@ -111,7 +126,7 @@ func readCSV(reader *csv.Reader) ([]*lrc.NetworkForward, error) {
 	}
 
 	// Slice to store parsed data
-	var forwardedHTLCs []*lrc.NetworkForward
+	var forwardedHTLCs []*NetworkForward
 
 	// Process each row
 	for _, row := range records[1:] {
@@ -164,7 +179,7 @@ func readCSV(reader *csv.Reader) ([]*lrc.NetworkForward, error) {
 		inFlightHTLC.ProposedHTLC.OutgoingChannel = lnwire.NewShortChanIDFromInt(chanOut)
 		resolvedHTLC.OutgoingChannel = lnwire.NewShortChanIDFromInt(chanOut)
 
-		networkHtlc := lrc.NetworkForward{
+		networkHtlc := NetworkForward{
 			NodeAlias: row[9],
 			ForwardedHTLC: &lrc.ForwardedHTLC{
 				InFlightHTLC: inFlightHTLC,
@@ -177,6 +192,52 @@ func readCSV(reader *csv.Reader) ([]*lrc.NetworkForward, error) {
 	}
 
 	return forwardedHTLCs, nil
+}
+
+func processForwards(forwards []*NetworkForward, clock clock.Clock,
+	params lrc.ManagerParams) (
+	map[string]map[lnwire.ShortChannelID]*lrc.ChannelBoostrap, error) {
+
+	nodes := make(map[string]map[lnwire.ShortChannelID]*lrc.ChannelBoostrap)
+
+	for _, h := range forwards {
+		channels, ok := nodes[h.NodeAlias]
+		if !ok {
+			channels = make(
+				map[lnwire.ShortChannelID]*lrc.ChannelBoostrap,
+			)
+		}
+
+		incoming, ok := channels[h.IncomingChannel]
+		if !ok {
+			incoming = &lrc.ChannelBoostrap{
+				Scid: h.IncomingChannel,
+			}
+		}
+
+		outgoing, ok := channels[h.OutgoingChannel]
+		if !ok {
+			outgoing = &lrc.ChannelBoostrap{
+				Scid: h.OutgoingChannel,
+			}
+		}
+
+		err := incoming.AddHTLC(clock, h.ForwardedHTLC, params)
+		if err != nil {
+			return nil, err
+		}
+
+		err = outgoing.AddHTLC(clock, h.ForwardedHTLC, params)
+		if err != nil {
+			return nil, err
+		}
+
+		channels[h.IncomingChannel] = incoming
+		channels[h.OutgoingChannel] = outgoing
+		nodes[h.NodeAlias] = channels
+	}
+
+	return nodes, nil
 }
 
 type networkReputation struct {
@@ -197,102 +258,99 @@ func (n networkReputation) outgoingReputation() bool {
 	return n.outgoingRepAmt > n.outgoingRevAmt
 }
 
-func (n networkReputation) goodReputation() bool {
-	return n.incomingReputation() && n.outgoingReputation()
+func (n networkReputation) bidiReputation() bool {
+	return n.outgoingReputation() && n.incomingReputation()
 }
-
-func getNetworkData(data map[string]*lrc.ChannelBootstrap,
-	graph map[string]map[uint64]struct{}) ([]networkReputation, error) {
+func getNetworkData(bootstrap map[string]map[lnwire.ShortChannelID]*lrc.ChannelHistory,
+	graph map[string][]lnwire.ShortChannelID) ([]networkReputation, error) {
 
 	var (
 		records                  []networkReputation
 		goodRepPairs, totalPairs int
 	)
 
-	for alias, channels := range data {
+	// For each node, run through each channel and get its pairwise rep.
+	for node, channels := range graph {
+		// Count values for individual pair, just for logging.
 		var (
 			goodReputation int
 			pairs          int
 		)
 
-		allChannels, ok := graph[alias]
+		nodeBootstrap, ok := bootstrap[node]
 		if !ok {
-			return nil, fmt.Errorf("Node: %v not found in graph",
-				alias)
+			// If there's no history for the node, we just make an
+			// empty map, which will look like we just don't have
+			// any data for our channels.
+			nodeBootstrap = make(map[lnwire.ShortChannelID]*lrc.ChannelHistory)
 		}
 
-		// Add any channels for the node that have no bootstrapped
-		// activity, and thus no reputation or revenue.
-		for scid, _ := range allChannels {
-			scid := lnwire.NewShortChanIDFromInt(scid)
-			_, ok := channels.Incoming[scid]
-			if !ok {
-				channels.Incoming[scid] = nil
-			}
-
-			_, ok = channels.Outgoing[scid]
-			if !ok {
-				channels.Outgoing[scid] = nil
-			}
-		}
-
-		// TODO: all of these value will be at different timestamps
-		// because the decaying average was last updated at different
-		// times. Even if we update this, our clock will always be
-		// different, so we'll end up with different values per-pair.
-		for chanIn, reputation := range channels.Incoming {
-			// Allow nil entires for the case where we have no
-			// reputation tracked.
+		// For each channel, we need to generate every possible pair.
+		// This requires picking each channel as an incoming candidate
+		// and then comparing it to every other channel.
+		for _, incomingChannel := range channels {
 			incomingReputation := 0.0
-			if reputation != nil {
-				incomingReputation = reputation.DebugValue()
+			incomingBidi := 0.0
+
+			incomingBoostrap, ok := nodeBootstrap[incomingChannel]
+			if ok {
+				if incomingBoostrap.IncomingReputation != nil {
+					incomingReputation = incomingBoostrap.IncomingReputation.Value
+				}
+
+				if incomingBoostrap.Revenue != nil {
+					incomingBidi = incomingBoostrap.Revenue.Value
+				}
 			}
 
-			for chanOut, revenue := range channels.Outgoing {
-				if chanOut == chanIn {
+			for _, outgoingChannel := range channels {
+				if outgoingChannel == incomingChannel {
 					continue
 				}
 
-				incomingRevenue := 0.0
-				if revenue != nil {
-					incomingRevenue = revenue.DebugValue()
-				}
-
-				// Get the reputation of the outgoing channel.
 				outgoingReputation := 0.0
-				outRepAvg, _ := channels.Incoming[chanOut]
-				if outRepAvg != nil {
-					outgoingReputation = outRepAvg.DebugValue()
-				}
+				outgoingBidi := 0.0
 
-				outgoingRevenue := 0.0
-				inRevAvg, _ := channels.Outgoing[chanIn]
-				if inRevAvg != nil {
-					outgoingRevenue = inRevAvg.DebugValue()
+				outgoingBootstrap, ok := nodeBootstrap[outgoingChannel]
+				if ok {
+					if outgoingBootstrap.OutgoingReputation != nil {
+						outgoingReputation = outgoingBootstrap.OutgoingReputation.Value
+					}
+
+					if outgoingBootstrap.Revenue != nil {
+						outgoingBidi = outgoingBootstrap.Revenue.Value
+					}
 				}
 
 				record := networkReputation{
-					node:           alias,
-					chanIn:         chanIn.ToUint64(),
-					chanOut:        chanOut.ToUint64(),
+					node:           node,
+					chanIn:         incomingChannel.ToUint64(),
+					chanOut:        outgoingChannel.ToUint64(),
 					incomingRepAmt: incomingReputation,
-					incomingRevAmt: incomingRevenue,
+					incomingRevAmt: incomingBidi,
 					outgoingRepAmt: outgoingReputation,
-					outgoingRevAmt: outgoingRevenue,
+					outgoingRevAmt: outgoingBidi,
 				}
 
 				pairs++
-				if record.goodReputation() {
+				// Right now, we're concerned with outgoing rep.
+				if record.outgoingReputation() {
 					goodReputation++
 				}
 				records = append(records, record)
 			}
 		}
 
+		// If a node has a single channel, we don't worry about it.
+		if pairs == 0 {
+			continue
+		}
+
 		goodRepPairs += goodReputation
 		totalPairs += pairs
 		fmt.Printf("Node: %v has %v/%v good reputation pairs (%v%%)\n",
-			alias, goodReputation, pairs, (goodReputation * 100 / pairs))
+			node, goodReputation, pairs, (goodReputation * 100 / pairs))
+
 	}
 
 	fmt.Printf("Total pairs: %v, with good reputation: %v (%v %%)\n",
@@ -316,7 +374,7 @@ func writeNetworkData(path string, records []networkReputation) error {
 	defer writer.Flush()
 
 	// Write the header row
-	header := []string{"node", "chan_in", "chan_out", "reputation_in", "revenue_in", "reputation_out", "revenue_out", "good_rep"}
+	header := []string{"node", "chan_in", "chan_out", "reputation_in", "revenue_in", "reputation_out", "revenue_out", "incoming_rep", "outgoing_rep", "bidi_rep"}
 	if err := writer.Write(header); err != nil {
 		return fmt.Errorf("failed to write header: %v", err)
 	}
@@ -329,7 +387,9 @@ func writeNetworkData(path string, records []networkReputation) error {
 			fmt.Sprintf("%f", record.incomingRevAmt),
 			fmt.Sprintf("%f", record.outgoingRepAmt),
 			fmt.Sprintf("%f", record.outgoingRevAmt),
-			strconv.FormatBool(record.goodReputation()),
+			strconv.FormatBool(record.incomingReputation()),
+			strconv.FormatBool(record.outgoingReputation()),
+			strconv.FormatBool(record.bidiReputation()),
 		}
 		if err := writer.Write(row); err != nil {
 			return fmt.Errorf("failed to write record: %v", err)
@@ -340,7 +400,7 @@ func writeNetworkData(path string, records []networkReputation) error {
 }
 
 type Edge struct {
-	ChannelID uint64 `json:"channel_id"`
+	ChannelID uint64 `json:"scid"`
 	Node1     Node   `json:"node_1"`
 	Node2     Node   `json:"node_2"`
 }
@@ -353,30 +413,20 @@ type SimNetwork struct {
 	Edges []Edge `json:"sim_network"`
 }
 
-func getNetworkEdges(graphData SimNetwork) (map[string]map[uint64]struct{},
-	error) {
-
-	network := make(map[string]map[uint64]struct{})
-	addEdge := func(alias string, channelID uint64) error {
-		channels, ok := network[alias]
-		if !ok {
-			channels = make(map[uint64]struct{})
-			network[alias] = channels
-		}
-
-		channels[channelID] = struct{}{}
-		return nil
-	}
+func getNetworkEdges(graphData SimNetwork) map[string][]lnwire.ShortChannelID {
+	network := make(map[string][]lnwire.ShortChannelID)
 
 	for _, edge := range graphData.Edges {
-		if err := addEdge(edge.Node1.Alias, edge.ChannelID); err != nil {
-			return nil, err
-		}
+		network[edge.Node1.Alias] = append(
+			network[edge.Node1.Alias],
+			lnwire.NewShortChanIDFromInt(edge.ChannelID),
+		)
 
-		if err := addEdge(edge.Node2.Alias, edge.ChannelID); err != nil {
-			return nil, err
-		}
+		network[edge.Node2.Alias] = append(
+			network[edge.Node2.Alias],
+			lnwire.NewShortChanIDFromInt(edge.ChannelID),
+		)
 	}
 
-	return network, nil
+	return network
 }
