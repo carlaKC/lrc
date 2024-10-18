@@ -241,13 +241,21 @@ func processForwards(forwards []*NetworkForward, clock clock.Clock,
 }
 
 type networkReputation struct {
-	node           string
-	chanIn         uint64
-	chanOut        uint64
-	incomingRepAmt float64
-	incomingRevAmt float64
-	outgoingRepAmt float64
-	outgoingRevAmt float64
+	node    string
+	chanIn  uint64
+	chanOut uint64
+
+	incomingRepAmt  float64
+	incomingRepTsNs uint64
+
+	incomingRevAmt  float64
+	incomingRevTsNs uint64
+
+	outgoingRepAmt  float64
+	outgoingRepTsNs uint64
+
+	outgoingRevAmt  float64
+	outgoingRevTsNs uint64
 }
 
 func (n networkReputation) incomingReputation() bool {
@@ -290,16 +298,25 @@ func getNetworkData(bootstrap map[string]map[lnwire.ShortChannelID]*lrc.ChannelH
 		// and then comparing it to every other channel.
 		for _, incomingChannel := range channels {
 			incomingReputation := 0.0
-			incomingBidi := 0.0
+			var incomingReputationTs uint64 = 0
+
+			incomingRevenueBidi := 0.0
+			var incomingRevTs uint64 = 0
 
 			incomingBoostrap, ok := nodeBootstrap[incomingChannel]
 			if ok {
 				if incomingBoostrap.IncomingReputation != nil {
 					incomingReputation = incomingBoostrap.IncomingReputation.Value
+					incomingReputationTs = uint64(
+						incomingBoostrap.IncomingReputation.LastUpdate.UnixNano(),
+					)
 				}
 
 				if incomingBoostrap.Revenue != nil {
-					incomingBidi = incomingBoostrap.Revenue.Value
+					incomingRevenueBidi = incomingBoostrap.Revenue.Value
+					incomingRevTs = uint64(
+						incomingBoostrap.Revenue.LastUpdate.UnixNano(),
+					)
 				}
 			}
 
@@ -308,28 +325,31 @@ func getNetworkData(bootstrap map[string]map[lnwire.ShortChannelID]*lrc.ChannelH
 					continue
 				}
 
-				outgoingReputation := 0.0
-				outgoingBidi := 0.0
+				record := networkReputation{
+					node:            node,
+					chanIn:          incomingChannel.ToUint64(),
+					chanOut:         outgoingChannel.ToUint64(),
+					incomingRepAmt:  incomingReputation,
+					incomingRepTsNs: incomingReputationTs,
+					incomingRevAmt:  incomingRevenueBidi,
+					incomingRevTsNs: incomingRevTs,
+				}
 
 				outgoingBootstrap, ok := nodeBootstrap[outgoingChannel]
 				if ok {
 					if outgoingBootstrap.OutgoingReputation != nil {
-						outgoingReputation = outgoingBootstrap.OutgoingReputation.Value
+						record.outgoingRepAmt = outgoingBootstrap.OutgoingReputation.Value
+						record.outgoingRepTsNs = uint64(
+							outgoingBootstrap.OutgoingReputation.LastUpdate.UnixNano(),
+						)
 					}
 
 					if outgoingBootstrap.Revenue != nil {
-						outgoingBidi = outgoingBootstrap.Revenue.Value
+						record.outgoingRevAmt = outgoingBootstrap.Revenue.Value
+						record.outgoingRevTsNs = uint64(
+							outgoingBootstrap.Revenue.LastUpdate.UnixNano(),
+						)
 					}
-				}
-
-				record := networkReputation{
-					node:           node,
-					chanIn:         incomingChannel.ToUint64(),
-					chanOut:        outgoingChannel.ToUint64(),
-					incomingRepAmt: incomingReputation,
-					incomingRevAmt: incomingBidi,
-					outgoingRepAmt: outgoingReputation,
-					outgoingRevAmt: outgoingBidi,
 				}
 
 				pairs++
@@ -374,7 +394,7 @@ func writeNetworkData(path string, records []networkReputation) error {
 	defer writer.Flush()
 
 	// Write the header row
-	header := []string{"node", "chan_in", "chan_out", "reputation_in", "revenue_in", "reputation_out", "revenue_out", "incoming_rep", "outgoing_rep", "bidi_rep"}
+	header := []string{"node", "chan_in", "chan_out", "reputation_in", "revenue_in", "reputation_out", "revenue_out", "reputation_in_ns", "revenue_in_ns", "reputation_out_ns", "revenue_out_ns", "incoming_rep", "outgoing_rep", "bidi_rep"}
 	if err := writer.Write(header); err != nil {
 		return fmt.Errorf("failed to write header: %v", err)
 	}
@@ -387,6 +407,10 @@ func writeNetworkData(path string, records []networkReputation) error {
 			fmt.Sprintf("%f", record.incomingRevAmt),
 			fmt.Sprintf("%f", record.outgoingRepAmt),
 			fmt.Sprintf("%f", record.outgoingRevAmt),
+			strconv.FormatUint(record.incomingRepTsNs, 10),
+			strconv.FormatUint(record.incomingRevTsNs, 10),
+			strconv.FormatUint(record.outgoingRepTsNs, 10),
+			strconv.FormatUint(record.outgoingRevTsNs, 10),
 			strconv.FormatBool(record.incomingReputation()),
 			strconv.FormatBool(record.outgoingReputation()),
 			strconv.FormatBool(record.bidiReputation()),
