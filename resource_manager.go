@@ -146,7 +146,7 @@ func NewResourceManager(params ManagerParams, clock clock.Clock,
 			}
 
 			log.Infof("Added new channel reputation: %v with "+
-				"history: %v", channel, history)
+				"history: %v", channel.ToUint64(), history)
 
 			return newReputationTracker(
 				clock, params, log, info, history,

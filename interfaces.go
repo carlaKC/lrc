@@ -396,17 +396,17 @@ func (c *ChannelHistory) String() string {
 	str := ""
 
 	if c.IncomingReputation != nil {
-		str = fmt.Sprintf("incoming reputation: %v\n",
+		str = fmt.Sprintf("incoming reputation: %v",
 			c.IncomingReputation.Value)
 	}
 
 	if c.OutgoingReputation != nil {
-		str = fmt.Sprintf("%voutgoing reputation: %v\n", str,
+		str = fmt.Sprintf("%v, outgoing reputation: %v", str,
 			c.OutgoingReputation.Value)
 	}
 
 	if c.Revenue != nil {
-		str = fmt.Sprintf("%vrevenue: %v", str, c.Revenue.Value)
+		str = fmt.Sprintf("%v, revenue: %v", str, c.Revenue.Value)
 	}
 
 	if str == "" {
