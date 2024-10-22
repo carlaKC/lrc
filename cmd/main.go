@@ -259,11 +259,11 @@ type networkReputation struct {
 }
 
 func (n networkReputation) incomingReputation() bool {
-	return n.incomingRepAmt > n.incomingRevAmt
+	return n.incomingRepAmt > n.outgoingRevAmt
 }
 
 func (n networkReputation) outgoingReputation() bool {
-	return n.outgoingRepAmt > n.outgoingRevAmt
+	return n.outgoingRepAmt > n.incomingRevAmt
 }
 
 func (n networkReputation) bidiReputation() bool {
