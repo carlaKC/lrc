@@ -79,7 +79,7 @@ func (r ReputationCheck) SufficientReputation() bool {
 
 func (r ReputationCheck) String() string {
 	str := fmt.Sprintf("Reputation check for HTLC risk %v\n"+
-		"- Outgoing check (%v): %v - inflight %v - htlc %v > %v (utilization %v)",
+		"- Outgoing check (%v): %v - inflight %v - htlc %v > %v (utilization %v disabled)",
 		r.SufficientReputation(),
 		r.OutgoingReputation(),
 		r.OutgoingChannel.Reputation, r.OutgoingChannel.InFlightRisk,

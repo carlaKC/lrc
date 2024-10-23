@@ -454,12 +454,12 @@ func (r reputationTracker) calcInFlightRisk(htlc *ProposedHTLC,
 func (r reputationTracker) htlcRisk(htlc *ProposedHTLC,
 	incoming bool) float64 {
 
-	utiliation := r.incomingUtilization.maxUtilization()
+	/*utiliation := r.incomingUtilization.maxUtilization()
 	if !incoming {
 		utiliation = r.outgoingUtilization.maxUtilization()
-	}
+	}*/
 
 	return (float64(htlc.ForwardingFee()) *
 		float64(htlc.CltvExpiryDelta) * r.blockTime * 60) /
-		r.resolutionPeriod.Seconds() * utiliation
+		r.resolutionPeriod.Seconds() //* utiliation
 }
